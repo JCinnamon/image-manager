@@ -78,13 +78,21 @@ body.rzing *{cursor:col-resize !important}
 .pane-title{font-family:var(--vom-display);font-size:.98rem;color:var(--primary-dark);letter-spacing:.01em}
 .pane-head .right{margin-left:auto;display:flex;gap:.25rem}
 
-/* ── Library tabs ──────────────────────────────────────────────────────── */
-.lib-tabs{flex:0 0 auto;display:flex;background:var(--bg-page);border-bottom:1px solid var(--border)}
-.libtab{flex:1 1 0;border:none;background:transparent;padding:.55rem .4rem;cursor:pointer;
-  font-family:var(--vom-display);font-size:.95rem;color:var(--text-muted);letter-spacing:.01em;
-  border-bottom:2px solid transparent;transition:color .12s,border-color .12s}
-.libtab:hover{color:var(--text)}
-.libtab.active{color:var(--primary-dark);border-bottom-color:var(--accent);background:var(--bg-white)}
+/* ── Library head and scope ────────────────────────────────────────────────
+   The two tabs are gone. Organising projects lives at the hub now, so the
+   sidebar is one list with a filter over it. */
+.lib-head{flex:0 0 auto;display:flex;align-items:center;padding:.5rem .7rem;
+  background:var(--bg-page);border-bottom:1px solid var(--border)}
+.lib-scope{display:flex;align-items:center;gap:.4rem;padding:.5rem .7rem .3rem}
+.lib-scope select{flex:1 1 auto;min-width:0;font:inherit;font-size:.8rem;padding:.24rem .4rem;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-white);color:var(--text)}
+.lib-scope .lib-hub{flex:0 0 auto;font-size:.78rem;color:var(--primary);text-decoration:none;white-space:nowrap}
+.lib-scope .lib-hub:hover{text-decoration:underline}
+.lib-outside{padding:.3rem .7rem;font-size:.74rem;color:var(--text-muted);background:var(--warning-bg);
+  border-bottom:1px solid var(--border)}
+.lib-outside a{color:var(--primary);cursor:pointer;text-decoration:underline}
+.pchip{display:inline-flex;align-items:center;gap:.22rem;font-size:.78rem;padding:.1rem .34rem;
+  border:1px solid var(--border);border-radius:3px;background:var(--bg-page);white-space:nowrap}
 
 .lib-action{padding:.55rem .7rem .3rem}
 .lib-action .btn{width:100%;justify-content:center}
@@ -415,8 +423,17 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
 #projBar .pb-name{font-weight:600;color:var(--text);border-bottom:2px solid var(--accent);padding-bottom:1px}
 #projBar .pb-sub{color:var(--text-muted);font-size:.76rem}
 #projBar .pb-none{color:var(--text-muted)}
-#projBar .pb-link{margin-left:auto;color:var(--primary);text-decoration:none;font-size:.78rem}
+#projBar .pb-mid{flex:1 1 auto;display:flex;align-items:center;gap:.4rem;min-width:0}
+#projBar .pb-link{color:var(--primary);text-decoration:none;font-size:.78rem}
 #projBar .pb-link:hover{text-decoration:underline}
+/* The one control every page in the suite shares, so it looks like one. */
+#projBar .pb-hub{flex:0 0 auto;display:inline-flex;align-items:center;gap:.32rem;font-size:.78rem;
+  text-decoration:none;padding:.22rem .6rem;border-radius:var(--radius);
+  border:1px solid var(--primary);color:var(--primary);background:var(--bg-white)}
+#projBar .pb-hub:hover{background:var(--primary);color:#fff}
+#projBar .pb-hub-i{font-size:.72rem;opacity:.85}
+#projBar .pb-pill.mirror{background:#eef3f7;color:var(--primary);border:1px solid var(--border)}
+#projBar .pb-warn{border-color:var(--warning-border)!important;background:var(--warning-bg)!important;color:#7a5200!important}
 #projBar .pb-pill{font-family:var(--vom-mono);font-size:.62rem;letter-spacing:.07em;text-transform:uppercase;
   padding:.1rem .34rem;border-radius:3px}
 #projBar .pb-pill.folder{background:var(--accent-light);color:#12695c}
@@ -520,10 +537,7 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
 
   <!-- ══════════ LIBRARY SIDEBAR ══════════ -->
   <aside id="sidebar">
-    <div class="lib-tabs">
-      <button class="libtab" id="libtab-datasets" onclick="setLibTab('datasets')">Datasets</button>
-      <button class="libtab" id="libtab-projects" onclick="setLibTab('projects')">Projects</button>
-    </div>
+    <div class="lib-head"><span class="pane-title">Library</span></div>
     <div class="pane-scroll" id="treeScroll">
       <div id="tree"></div>
     </div>
@@ -711,7 +725,7 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <script>
 /* SHARED — edit shared/vom_shared.py, not here — generated from shared/vom_shared.py, do not edit here */
-var VOM_DB_NAME='vom-suite', VOM_DB_VERSION=2;
+var VOM_DB_NAME='vom-suite', VOM_DB_VERSION=3;
 var _vomDb=null;
 
 function vomDb(){
@@ -736,6 +750,17 @@ function vomDb(){
       if(!db.objectStoreNames.contains('runs')){
         var r=db.createObjectStore('runs',{keyPath:'id'});
         r.createIndex('projectId','projectId',{unique:false});
+      }
+      /* Dataset manifests that arrived WITHOUT their images — from an imported
+         project file. They live here rather than in the Manager's own database
+         because the hub must never so much as create that one (an empty
+         vom-viewer at version 1 would leave the Manager finding none of its
+         stores). The reader merges them in, marked pending, so an imported
+         project shows its datasets honestly: the curation is here, the pixels
+         are not. */
+      if(!db.objectStoreNames.contains('manifests')){
+        var m=db.createObjectStore('manifests',{keyPath:'id'});
+        m.createIndex('projectId','projectId',{unique:false});
       }
     };
     rq.onsuccess=function(){_vomDb=rq.result;res(_vomDb);};
@@ -815,6 +840,25 @@ async function vomEnsureAccess(p){
   return {ok:false,reason:'Permission to use that folder was not granted.'};
 }
 
+/* The same question WITHOUT asking. `queryPermission` needs no user gesture, so
+   this can run on load: where Chrome has kept the grant — which it increasingly
+   does for a folder you have used before — the project simply opens connected
+   and nobody has to press anything. Only when the answer is 'prompt' does a
+   click become unavoidable, and that is the only case the bar mentions it.
+   `requestPermission` is never called from here; calling it without a gesture
+   fails silently, which would look exactly like a folder that had gone away. */
+async function vomQuietAccess(p){
+  if(!p||p.store!=='folder') return {ok:p&&p.store!=='folder'};
+  var h;
+  try{ h=await vomHandleGet(p.id); }catch(e){ return {ok:false,state:'error'}; }
+  if(!h) return {ok:false,state:'forgotten',
+                 reason:'The folder for this project is not remembered any more. Re-open it to continue.'};
+  var q;
+  try{ q=await h.queryPermission({mode:'readwrite'}); }catch(e){ return {ok:false,state:'error'}; }
+  if(q==='granted') return {ok:true,handle:h,state:'granted'};
+  return {ok:false,state:q==='denied'?'denied':'prompt',handle:h};
+}
+
 /* ── Outputs and the run log ──────────────────────────────────────────────
    Two things, deliberately separate. An OUTPUT is a file a tool produced. A RUN
    is the record of producing it: which tool, which version, which dataset, what
@@ -890,6 +934,9 @@ async function vomLogRun(p,handle,run){
   }
   p.runs=(p.runs||0)+1; p.updated=Date.now();
   await vomProjectPut(p);
+  /* Anything that produced a run produced a file too, so this is the one hook
+     that catches every tool's output without each of them knowing about it. */
+  if(typeof vomMirrorTouch==='function') vomMirrorTouch(p);
   return rec;
 }
 
@@ -935,6 +982,137 @@ async function vomOutputs(p,handle){
     }
   }catch(err){}
   return list.sort(function(a,b){return (b.created||0)-(a.created||0);});
+}
+
+/* ── Duplicating a project ────────────────────────────────────────────────
+   The record and its dataset links, not the images. "Same setup, next field
+   season". A browser copy always, even of a folder project, because two
+   projects pointing at one folder would both claim to own its datasets/
+   directory and the second write would overwrite the first. */
+async function vomDuplicateProject(p){
+  if(!p) return null;
+  var copy={id:vomUid(),name:p.name+' (copy)',store:'browser',
+            created:Date.now(),updated:Date.now(),datasets:0,runs:0,
+            folderName:null,colour:p.colour||null,note:p.note||'',
+            copiedFrom:p.id};
+  await vomProjectPut(copy);
+  /* Dataset links only. The datasets themselves are shared — that is what
+     `projectIds` being a list has always meant. */
+  var db=await vomManagerDb();
+  if(db){
+    try{
+      var dss=await _vomMgrReq(db,'datasets',function(s){return s.getAll();});
+      var mine=(dss||[]).filter(function(d){return (d.projectIds||[]).indexOf(p.id)>=0;});
+      if(mine.length){
+        await new Promise(function(res,rej){
+          var tx=db.transaction('datasets','readwrite'),st=tx.objectStore('datasets');
+          mine.forEach(function(d){ d.projectIds=(d.projectIds||[]).concat(copy.id); st.put(d); });
+          tx.oncomplete=res; tx.onerror=function(){rej(tx.error);};
+        });
+      }
+    }catch(e){}
+  }
+  return copy;
+}
+
+/* ── The mirror ───────────────────────────────────────────────────────────
+   Not sync. A BROWSER project writes its light artefacts — the project record,
+   the dataset manifests, the outputs and the run log — into a folder you
+   already have OneDrive, Drive or Dropbox watching, and they carry it. No
+   server, no account, no conflict resolution here, because the folder is dumb
+   and somebody else does the hard part.
+
+   NEVER the images. Mirroring those would mean keeping every frame in browser
+   storage AND writing a second copy, which is the exact arrangement folder
+   projects exist to avoid.
+
+   ONE-WAY, and last write wins. Nothing is ever read back from a mirror, so
+   there is no question about which copy is right — the browser is always the
+   original. Two machines writing to one mirror folder will overwrite each
+   other, which is why the wording says so rather than implying sync. */
+function vomMirrorGet(id){return _vomTx('handles','readonly',function(s){return s.get('mirror:'+id);});}
+function vomMirrorPut(id,h){return _vomTx('handles','readwrite',function(s){return s.put(h,'mirror:'+id);});}
+function vomMirrorDel(id){return _vomTx('handles','readwrite',function(s){return s.delete('mirror:'+id);});}
+
+async function vomMirrorAccess(p,ask){
+  if(!p||p.store!=='browser'||!p.mirror) return {ok:false,state:'off'};
+  var h=await vomMirrorGet(p.id);
+  if(!h) return {ok:false,state:'forgotten'};
+  var q=await h.queryPermission({mode:'readwrite'});
+  if(q==='granted') return {ok:true,handle:h,state:'granted'};
+  if(!ask) return {ok:false,state:'prompt',handle:h};
+  var r=await h.requestPermission({mode:'readwrite'});
+  return r==='granted'?{ok:true,handle:h,state:'granted'}:{ok:false,state:'denied'};
+}
+
+async function vomMirrorChoose(p){
+  if(!vomCanUseFolders()) throw new Error('This browser cannot open a folder.');
+  var dir=await window.showDirectoryPicker({mode:'readwrite'});
+  await vomMirrorPut(p.id,dir);
+  p.mirror={name:dir.name,since:Date.now()};
+  await vomProjectPut(p);
+  return dir;
+}
+async function vomMirrorStop(p){
+  await vomMirrorDel(p.id);
+  delete p.mirror;
+  await vomProjectPut(p);
+}
+
+/* Everything the project knows, written flat. Cheap enough to do whole rather
+   than work out what changed — a mirror that wrote only deltas would be a
+   mirror that could be subtly out of date, which is worse than a slow one. */
+async function vomMirrorWrite(p,onProgress){
+  var a=await vomMirrorAccess(p,false);
+  if(!a.ok) return {ok:false,state:a.state};
+  var root=a.handle;
+  async function put(names,file,bytes){
+    var d=root;
+    for(var i=0;i<names.length;i++) d=await d.getDirectoryHandle(names[i],{create:true});
+    var fh=await d.getFileHandle(file,{create:true});
+    var w=await fh.createWritable();
+    await w.write(bytes);
+    await w.close();
+  }
+  var n=0;
+  await put([],'vom-project.json',JSON.stringify({
+    format:'vom-project',version:1,id:p.id,name:p.name,store:'browser (mirrored)',
+    created:new Date(p.created||Date.now()).toISOString(),
+    mirrored:new Date().toISOString(),
+    note:'A one-way copy. The original lives in the browser that wrote this; nothing here is read back.'
+  },null,2)); n++;
+
+  var ds=await vomDatasets(p,null);
+  for(var i=0;i<ds.length;i++){
+    var doc=await vomDatasetDoc(p,null,ds[i]);
+    if(!doc) continue;
+    await put(['datasets',vomSlug(ds[i].name)],'dataset.json',JSON.stringify(doc,null,2)); n++;
+    if(onProgress) onProgress(i+1,ds.length);
+  }
+  var runs=await vomRuns(p,null);
+  for(var j=0;j<runs.length;j++){ await put(['runs'],runs[j].id+'.json',JSON.stringify(runs[j],null,2)); n++; }
+
+  var outs=await vomOutputs(p,null);
+  for(var k=0;k<outs.length;k++){
+    var f=null;
+    try{ f=await vomOpenOutput(p,null,outs[k]); }catch(e){ f=null; }
+    if(!f) continue;
+    await put(['outputs',vomSlug(outs[k].tool)],outs[k].name,f); n++;
+  }
+  p.mirror=p.mirror||{};
+  p.mirror.written=Date.now();
+  await vomProjectPut(p);
+  return {ok:true,files:n};
+}
+
+/* Debounced, because ten ratings in a row is one write, not ten. */
+var _vomMirrorTimer=null;
+function vomMirrorTouch(p,delay){
+  if(!p||p.store!=='browser'||!p.mirror) return;
+  clearTimeout(_vomMirrorTimer);
+  _vomMirrorTimer=setTimeout(function(){
+    vomMirrorWrite(p).catch(function(){});
+  },delay==null?2500:delay);
 }
 
 /* Which project the tools should open. One key, shared by every page. */
@@ -1027,16 +1205,35 @@ async function vomDatasets(p,handle){
     }
     return out.sort(function(a,b){return _vomNat(a.name,b.name);});
   }
+  var out2=[];
   var db=await vomManagerDb();
-  if(!db) return [];
-  var dss=await _vomMgrReq(db,'datasets',function(s){return s.getAll();});
-  var mine=(dss||[]).filter(function(d){return (d.projectIds||[]).indexOf(p.id)>=0;}), out2=[];
-  for(var i=0;i<mine.length;i++){
-    var recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(mine[i].id);});
-    out2.push({id:mine[i].id,name:mine[i].name,count:(recs||[]).length,
-               edited:(recs||[]).filter(function(r){return r.edits;}).length,
-               note:mine[i].note||'',updated:mine[i].updated||mine[i].created||0,where:'browser'});
+  if(db){
+    var dss=await _vomMgrReq(db,'datasets',function(s){return s.getAll();});
+    var mine=(dss||[]).filter(function(d){return (d.projectIds||[]).indexOf(p.id)>=0;});
+    for(var i=0;i<mine.length;i++){
+      var recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(mine[i].id);});
+      out2.push({id:mine[i].id,name:mine[i].name,count:(recs||[]).length,
+                 edited:(recs||[]).filter(function(r){return r.edits;}).length,
+                 note:mine[i].note||'',updated:mine[i].updated||mine[i].created||0,where:'browser'});
+    }
   }
+  /* Manifests from an imported project: real datasets with real curation and no
+     pixels. Shown rather than hidden, and marked, because a project that
+     silently listed four datasets when its file described six would be lying
+     about what you had. */
+  var pend=[];
+  try{ pend=await _vomIdx('manifests',p.id); }catch(e){ pend=[]; }
+  var have={};
+  out2.forEach(function(d){have[d.name]=1;});
+  pend.forEach(function(m){
+    if(have[m.name]) return;
+    var d=m.doc||{};
+    out2.push({id:m.id,name:m.name||d.name||'Dataset',
+               count:(d.images||[]).length,
+               edited:(d.images||[]).filter(function(i){return i.edits;}).length,
+               note:d.note||'',updated:m.imported||0,where:'browser',
+               pending:true,doc:d});
+  });
   return out2.sort(function(a,b){return _vomNat(a.name,b.name);});
 }
 
@@ -1079,6 +1276,13 @@ async function vomOpenDataset(p,handle,dsId,onProgress){
     }
     return files;
   }
+  /* A manifest has no pixels behind it. Saying so is the whole point of marking
+     them pending — handing back an empty array would read as "it worked and
+     there was nothing in it". */
+  var pending=null;
+  try{ pending=await _vomTx('manifests','readonly',function(s){return s.get(dsId);}); }catch(e){}
+  if(pending) throw new Error('That dataset came from an imported project file, which carries the ' +
+    'curation but not the images. Import the image files into it first.');
   var db=await vomManagerDb();
   if(!db) return [];
   var recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(dsId);});
@@ -1093,6 +1297,223 @@ async function vomOpenDataset(p,handle,dsId,onProgress){
     if(onProgress) onProgress(j+1,recs.length);
   }
   return out;
+}
+
+/* ── A project as a portable file ─────────────────────────────────────────
+   The archival unit. What you attach to a data-availability statement, hand a
+   co-author, or keep when a paper is finished: the dataset manifests with their
+   session metadata and curation, the full run log, and every output. A few MB.
+
+   NOT the images. Half a gigabyte per shoot would make this slow enough to look
+   broken and is the one part you already have in a folder somewhere. What
+   travels is everything that would otherwise exist only inside one browser. */
+function _vomU32(n){return [n&255,(n>>8)&255,(n>>16)&255,(n>>24)&255];}
+function _vomU16(n){return [n&255,(n>>8)&255];}
+var _VOM_CRC=null;
+function _vomCrc(buf){
+  if(!_VOM_CRC){
+    _VOM_CRC=new Uint32Array(256);
+    for(var i=0;i<256;i++){var c=i;for(var k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);_VOM_CRC[i]=c>>>0;}
+  }
+  var crc=0xFFFFFFFF;
+  for(var j=0;j<buf.length;j++) crc=(_VOM_CRC[(crc^buf[j])&255]^(crc>>>8))>>>0;
+  return (crc^0xFFFFFFFF)>>>0;
+}
+/* Store-only, no compression. files = [{name, bytes:Uint8Array}].
+   The central directory record is FORTY-SIX bytes: six 16-bit fields before the
+   CRC, not seven. An extra one puts every entry after the first two bytes out
+   and `unzip -t` rejects the archive — which the Analyzer shipped with, hidden
+   because macOS Archive Utility falls back to the local headers. */
+function vomZip(files){
+  var parts=[], central=[], offset=0, enc=new TextEncoder();
+  for(var i=0;i<files.length;i++){
+    var nm=enc.encode(files[i].name), by=files[i].bytes, crc=_vomCrc(by);
+    var local=new Uint8Array([0x50,0x4b,0x03,0x04].concat(
+      _vomU16(20),_vomU16(0),_vomU16(0),_vomU16(0),_vomU16(0),
+      _vomU32(crc),_vomU32(by.length),_vomU32(by.length),
+      _vomU16(nm.length),_vomU16(0)));
+    parts.push(local,nm,by);
+    central.push(new Uint8Array([0x50,0x4b,0x01,0x02].concat(
+      _vomU16(20),_vomU16(20),_vomU16(0),_vomU16(0),_vomU16(0),_vomU16(0),
+      _vomU32(crc),_vomU32(by.length),_vomU32(by.length),
+      _vomU16(nm.length),_vomU16(0),_vomU16(0),_vomU16(0),_vomU16(0),
+      _vomU32(0),_vomU32(offset))),nm);
+    offset+=local.length+nm.length+by.length;
+  }
+  var cdSize=0;
+  central.forEach(function(c){cdSize+=c.length;});
+  var end=new Uint8Array([0x50,0x4b,0x05,0x06].concat(
+    _vomU16(0),_vomU16(0),_vomU16(files.length),_vomU16(files.length),
+    _vomU32(cdSize),_vomU32(offset),_vomU16(0)));
+  return new Blob(parts.concat(central,[end]),{type:'application/zip'});
+}
+
+function _vomTxt(s){return new TextEncoder().encode(s);}
+function vomSlug(s){
+  var t=String(s||'item').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-');
+  return t||'item';
+}
+
+/* The full manifest for one dataset, whichever store it lives in. */
+async function vomDatasetDoc(p,handle,d){
+  if(p.store==='folder'&&handle&&d.slug){
+    try{
+      var root=await handle.getDirectoryHandle('datasets',{create:false});
+      var dir=await root.getDirectoryHandle(d.slug);
+      return JSON.parse(await (await (await dir.getFileHandle('dataset.json')).getFile()).text());
+    }catch(e){}
+  }
+  if(d.pending&&d.doc) return d.doc;
+  var db=await vomManagerDb();
+  if(!db) return null;
+  var ds=null;
+  try{ ds=await _vomMgrReq(db,'datasets',function(s){return s.get(d.id);}); }catch(e){}
+  if(!ds) return null;
+  var recs=[];
+  try{ recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(d.id);})||[]; }catch(e){}
+  recs.sort(function(a,b){return _vomNat(a.name,b.name);});
+  return {format:'vom-dataset',version:1,id:ds.id,name:ds.name,note:ds.note||'',
+          created:ds.created,updated:ds.updated||Date.now(),
+          meta:ds.meta||{},solar:ds.solar||null,projectIds:ds.projectIds||[],
+          excluded:ds.excluded||[],
+          images:recs.map(function(r){
+            return {file:r.origName||r.name,name:r.name,rating:r.rating||0,
+                    flag:r.flag||'',tags:r.tags||[],note:r.note||'',
+                    edits:r.edits||null};
+          })};
+}
+
+async function vomExportProject(p,handle,onProgress){
+  if(!p) throw new Error('no project');
+  var files=[], note=[];
+  files.push({name:'vom-project.json',bytes:_vomTxt(JSON.stringify({
+    format:'vom-project',version:1,id:p.id,name:p.name,store:p.store,
+    created:new Date(p.created||Date.now()).toISOString(),
+    exported:new Date().toISOString(), note:p.note||'',
+    contains:'dataset manifests, the run log and every output file \u2014 not the images'
+  },null,2))});
+
+  var ds=await vomDatasets(p,handle);
+  for(var i=0;i<ds.length;i++){
+    if(onProgress) onProgress('datasets',i+1,ds.length);
+    var doc=await vomDatasetDoc(p,handle,ds[i]);
+    if(!doc) continue;
+    files.push({name:'datasets/'+vomSlug(ds[i].slug||ds[i].name)+'/dataset.json',
+                bytes:_vomTxt(JSON.stringify(doc,null,2))});
+  }
+
+  var runs=await vomRuns(p,handle);
+  runs.forEach(function(r){
+    files.push({name:'runs/'+r.id+'.json',bytes:_vomTxt(JSON.stringify(r,null,2))});
+  });
+
+  var outs=await vomOutputs(p,handle);
+  for(var j=0;j<outs.length;j++){
+    if(onProgress) onProgress('outputs',j+1,outs.length);
+    var f=null;
+    try{ f=await vomOpenOutput(p,handle,outs[j]); }catch(e){ f=null; }
+    /* An output that cannot be read is NAMED in the file rather than silently
+       dropped — an archive that is quietly short is worse than one that says
+       what is missing. */
+    if(!f){ note.push(outs[j].tool+'/'+outs[j].name); continue; }
+    files.push({name:'outputs/'+vomSlug(outs[j].tool)+'/'+outs[j].name,
+                bytes:new Uint8Array(await f.arrayBuffer())});
+  }
+  if(note.length){
+    files.push({name:'MISSING.txt',bytes:_vomTxt(
+      'These outputs were listed by the project but could not be read when it was exported:\n\n'+
+      note.join('\n')+'\n')});
+  }
+  return {blob:vomZip(files),files:files.length,missing:note.length,
+          name:vomSlug(p.name)+'.vom.zip'};
+}
+
+/* ── Reading one back ─────────────────────────────────────────────────────
+   Always as a NEW browser project with a fresh id. Reusing the id would let an
+   import silently overwrite the project you already had open under that name,
+   which is the one outcome an import must never produce. */
+function _vomFindEnd(u8){
+  for(var i=u8.length-22;i>=0&&i>u8.length-65558;i--)
+    if(u8[i]===0x50&&u8[i+1]===0x4b&&u8[i+2]===0x05&&u8[i+3]===0x06) return i;
+  return -1;
+}
+async function vomUnzip(blob){
+  var u8=new Uint8Array(await blob.arrayBuffer()), dv=new DataView(u8.buffer);
+  var end=_vomFindEnd(u8);
+  if(end<0) throw new Error('That does not look like a project file.');
+  var n=dv.getUint16(end+10,true), off=dv.getUint32(end+16,true), out={};
+  var dec=new TextDecoder();
+  for(var i=0;i<n;i++){
+    if(u8[off]!==0x50||u8[off+1]!==0x4b||u8[off+2]!==0x01||u8[off+3]!==0x02)
+      throw new Error('That project file is damaged.');
+    var method=dv.getUint16(off+10,true);
+    var size=dv.getUint32(off+24,true);
+    var nl=dv.getUint16(off+28,true), el=dv.getUint16(off+30,true), cl=dv.getUint16(off+32,true);
+    var lho=dv.getUint32(off+42,true);
+    var name=dec.decode(u8.subarray(off+46,off+46+nl));
+    if(method!==0) throw new Error('That project file uses compression this reader does not support.');
+    var lnl=dv.getUint16(lho+26,true), lel=dv.getUint16(lho+28,true);
+    var start=lho+30+lnl+lel;
+    out[name]=u8.subarray(start,start+size);
+    off+=46+nl+el+cl;
+  }
+  return out;
+}
+
+async function vomImportProject(blob){
+  var entries=await vomUnzip(blob), dec=new TextDecoder();
+  var manifest=entries['vom-project.json'];
+  if(!manifest) throw new Error('That file has no vom-project.json in it, so it is not a project.');
+  var doc=JSON.parse(dec.decode(manifest));
+  if(doc.format!=='vom-project') throw new Error('That file is not a Vis-O-Matic project.');
+
+  var p={id:vomUid(),name:(doc.name||'Imported project')+' (imported)',store:'browser',
+         created:Date.now(),updated:Date.now(),datasets:0,runs:0,folderName:null,
+         note:doc.note||'', importedFrom:doc.id||null};
+  await vomProjectPut(p);
+
+  var counts={datasets:0,runs:0,outputs:0};
+  for(var name in entries){
+    if(/^datasets\/[^/]+\/dataset\.json$/.test(name)){
+      var d=null;
+      try{ d=JSON.parse(dec.decode(entries[name])); }catch(e){ continue; }
+      if(!d||d.format!=='vom-dataset') continue;
+      /* A fresh id, for the same reason the project gets one. */
+      await _vomTx('manifests','readwrite',function(s){
+        return s.put({id:vomUid().replace('p_','m_'),projectId:p.id,name:d.name||'Dataset',
+                      doc:d,imported:Date.now()});
+      });
+      counts.datasets++;
+    } else if(/^runs\/.+\.json$/.test(name)){
+      var r=null;
+      try{ r=JSON.parse(dec.decode(entries[name])); }catch(e){ continue; }
+      r.id='r_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+      r.projectId=p.id;
+      await _vomTx('runs','readwrite',function(s){return s.put(r);});
+      counts.runs++;
+    } else if(/^outputs\/[^/]+\/.+/.test(name)){
+      var bits=name.split('/');
+      await vomSaveOutput(p,null,{tool:bits[1],name:bits.slice(2).join('/'),
+        blob:new Blob([entries[name]])});
+      counts.outputs++;
+    }
+  }
+  p.runs=counts.runs; p.updated=Date.now();
+  await vomProjectPut(p);
+  return {project:p,counts:counts};
+}
+
+/* Removing an output. Only browser projects: a folder project's outputs are
+   ordinary files in a folder you own, and deleting your files from a web page
+   is not a power this tool should take. The RUN LOG is untouched either way —
+   what you did is a different fact from what is still lying around, and losing
+   the record because you tidied up a file would be the wrong trade. */
+async function vomDeleteOutput(p,o){
+  if(!p||!o) return false;
+  if(p.store==='folder') throw new Error('This output is a file in your project folder — delete it there.');
+  if(!o.id) return false;
+  await _vomTx('outputs','readwrite',function(s){return s.delete(o.id);});
+  return true;
 }
 
 /* One output back as a File — the Visualizer's way in, since what it consumes
@@ -1124,7 +1545,7 @@ async function vomOpenOutput(p,handle,o){
    the Analyzer would report.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const MANAGER_VERSION = 'v2.0';
+const MANAGER_VERSION = 'v3.0';
 const ANALYZER_URL   = 'https://www.jonathancinnamon.com/image-colour-analyzer/';
 
 /* ══════════ Small utilities ══════════ */
@@ -2170,7 +2591,7 @@ const state = {
   images: [],            // records for the OPEN dataset only
   curDs: null,           // dataset id
   curProject: null,      // project id being browsed, or null for "all datasets"
-  libTab: 'datasets',    // which library tab is showing
+  libScope: null,        // which project the library list is scoped to (null = follow the open one)
   sel: new Set(),        // selected image ids
   cursor: null,          // keyboard cursor image id
   sort: 'name',
@@ -2192,7 +2613,7 @@ const state = {
   job: null,             // running import/export job {cancel:false}
 };
 
-const SETTINGS_KEYS = ['sort', 'sortDir', 'group', 'tileSize', 'fitMode', 'inspectorOpen', 'curDs', 'curProject', 'libTab', 'sideW', 'inspW'];
+const SETTINGS_KEYS = ['sort', 'sortDir', 'group', 'tileSize', 'fitMode', 'inspectorOpen', 'curDs', 'curProject', 'libScope', 'sideW', 'inspW'];
 let _saveTimer = null;
 function saveSettings() {
   clearTimeout(_saveTimer);
@@ -2945,101 +3366,99 @@ function syncControls() {
   $('filterRating').value = String(state.filterRating);
 }
 
-/* ══════════ Library panel — two tabs ══════════
-   Each tab has exactly one job. DATASETS always means every dataset, with no
-   filtering and no breadcrumb. PROJECTS is where organising happens: clicking a
-   project drills into it IN PLACE, listing its datasets with one link back.
-   The earlier design jumped between tabs and left a breadcrumb behind, so the
-   Datasets tab sometimes meant "all" and sometimes meant "some". */
+/* ══════════ Library panel — ONE list, scoped ══════════
+   There used to be two tabs, Datasets and Projects, and the Projects one was a
+   second place to organise: drill into a project, see its datasets, file things
+   in and out. That has moved to the hub, where a project's whole life now lives
+   — created, renamed, deleted, filled and emptied in one place. A tool that
+   also organised projects was the arrangement in which a project could exist in
+   one place and not the other.
+
+   What is left here is a LIBRARY, scoped by a filter: the open project by
+   default, because that is the work in front of you, and everything when no
+   project is open, because someone who came to look at a folder of photographs
+   should never have to think about projects at all. */
 const UNFILED = '__unfiled__';
 
-function setLibTab(t) { state.libTab = t; saveSettings(); renderTree(); }
+/* Kept because saved settings and a couple of old call sites still name it.
+   Drilling into a project inside the Manager is no longer something it does. */
+function setLibTab() { renderTree(); }
+
+function libScope() {
+  /* A filter still pointing at a project that has since been deleted would show
+     an empty library, which looks exactly like data loss. */
+  const s = state.libScope;
+  if (s && s !== 'all' && s !== UNFILED && !prById(s)) return defaultScope();
+  return s || defaultScope();
+}
+function defaultScope() { return state.project ? state.project.id : 'all'; }
+function setLibScope(v) { state.libScope = v; saveSettings(); renderTree(); }
+
+function scopedDatasets() {
+  const s = libScope();
+  return s === 'all' ? state.datasets : datasetsOfProject(s);
+}
+
+function scopeBarHtml() {
+  const s = libScope();
+  const opt = (v, label, n) =>
+    `<option value="${v}"${s === v ? ' selected' : ''}>${escapeHtml(label)}${n == null ? '' : ` (${n})`}</option>`;
+  let opts = opt('all', 'All datasets', state.datasets.length);
+  for (const p of state.projects) opts += opt(p.id, p.name, datasetsOfProject(p.id).length);
+  const un = datasetsOfProject(UNFILED).length;
+  if (un) opts += opt(UNFILED, 'Not in any project', un);
+  return `<div class="lib-scope">
+      <select id="libScopeSel" onchange="setLibScope(this.value)"
+              title="Which datasets this list shows">${opts}</select>
+      <a class="lib-hub" href="${HUB_URL}"
+         title="Create, rename, delete and fill projects">Projects &rsaquo;</a>
+    </div>`;
+}
 
 function renderTree() {
   const el = $('tree');
-  $('libtab-datasets').classList.toggle('active', state.libTab !== 'projects');
-  $('libtab-projects').classList.toggle('active', state.libTab === 'projects');
-  el.innerHTML = state.libTab === 'projects' ? projectsTabHtml() : datasetsTabHtml();
+  if (!el) return;
+  el.innerHTML = scopeBarHtml() + datasetListHtml();
 }
 
-function datasetsTabHtml() {
-  let html = `<div class="lib-action">
-      <button class="btn btn-outline btn-sm" onclick="newDataset()">+ New dataset</button></div>`;
+function datasetListHtml() {
+  const s = libScope();
+  let list = scopedDatasets();
   if (!state.datasets.length) {
-    return html + `<div class="tree-empty">No datasets yet — drop images or a folder anywhere on this page
+    return `<div class="tree-empty">No datasets yet — drop images or a folder anywhere on this page
       to start one.</div>`;
   }
-  for (const d of state.datasets) html += dsRowHtml(d, true);
+
+  /* The dataset you are LOOKING AT is always in the list, whatever the filter
+     says. A grid full of images beside a sidebar insisting there is nothing
+     here reads as a bug every time — and in that moment it is the filter that
+     is wrong, not the dataset. */
+  const open = state.curDs ? dsById(state.curDs) : null;
+  const outside = !!(open && !list.some(d => d.id === open.id));
+  let head = '';
+  if (outside) {
+    list = [open].concat(list);
+    head = `<div class="lib-outside">Open, and not in this view \u2014
+      <a onclick="setLibScope('all')">show all datasets</a></div>`;
+  }
+
+  if (!list.length) {
+    const p = prById(s);
+    return `<div class="tree-empty">${s === UNFILED
+      ? 'Every dataset is filed in a project.'
+      : `Nothing in <b>${escapeHtml(p ? p.name : 'this project')}</b> yet. Use <b>+ Add</b> to bring one in
+         from the library, or drop images here while it is open.`}</div>`;
+  }
+  let html = head;
+  /* A project dot only says something when the list is not already one project. */
+  const showDots = (s === 'all' || s === UNFILED || outside);
+  for (const d of list) html += dsRowHtml(d, showDots);
   return html;
 }
 
 function datasetsOfProject(pid) {
   if (pid === UNFILED) return state.datasets.filter(d => !(d.projectIds || []).length);
   return state.datasets.filter(d => (d.projectIds || []).includes(pid));
-}
-
-function projectsTabHtml() {
-  /* Inside a project. */
-  if (state.curProject) {
-    const unfiled = state.curProject === UNFILED;
-    const p = unfiled ? { name: 'Unfiled', colour: 'var(--border)' } : prById(state.curProject);
-    if (!p) { state.curProject = null; return projectsTabHtml(); }
-    const list = datasetsOfProject(state.curProject);
-
-    let html = `<div class="crumb"><a onclick="selectProject(null)">&lsaquo; Projects</a>
-        <span style="color:var(--text-muted)">/</span>
-        <span class="dot" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${p.colour}"></span>
-        <b>${escapeHtml(p.name)}</b></div>`;
-    html += `<div class="lib-action">
-        <button class="btn btn-outline btn-sm" onclick="${unfiled ? 'newDataset()' : `addDatasetsDialog('${state.curProject}')`}">
-          ${unfiled ? '+ New dataset' : '+ Add datasets'}</button></div>`;
-    if (!list.length) {
-      html += `<div class="tree-empty">${unfiled
-        ? 'Every dataset is filed in a project.'
-        : 'No datasets in this project yet. Use <b>+ Add datasets</b> to file existing ones, or drop images here while this project is open.'}</div>`;
-      return html;
-    }
-    for (const d of list) html += dsRowHtml(d, false);
-    return html;
-  }
-
-  /* The project list. Creating, renaming and deleting live at the hub on the
-     Vis-O-Matic home page — one home for a project's life, so a project cannot
-     exist in one place and not the other. Filing datasets stays here, because
-     that is a thing you do while looking at datasets. */
-  let html = `<div class="lib-action">
-      <a class="btn btn-outline btn-sm" href="${HUB_URL}" title="Create, rename and delete projects"
-         style="text-decoration:none;text-align:center">Manage projects &rsaquo;</a></div>`;
-  if (!state.projects.length) {
-    html += `<div class="tree-empty">No projects yet. A project keeps one body of work together and every tool in
-      the suite can read it. <a href="${HUB_URL}">Start one on the Vis-O-Matic home page</a>.</div>`;
-  }
-  for (const p of state.projects) {
-    const ds = datasetsOfProject(p.id);
-    const imgs = ds.reduce((s, d) => s + (d.count || 0), 0);
-    const bytes = ds.reduce((s, d) => s + (d.bytes || 0), 0);
-    const isOpen = state.project && state.project.id === p.id;
-    html += `<div class="lrow${isOpen ? ' proj-open' : ''}" onclick="selectProject('${p.id}')" oncontextmenu="projectMenu(event,'${p.id}')"
-          title="${isOpen ? 'The open project. ' : ''}Open this project&#39;s datasets — right-click for options">
-        <span class="dot" style="background:${p.colour}"></span>
-        <span class="body"><span class="nm">${escapeHtml(p.name)}</span>
-          <span class="sub" title="${bytes ? fmtBytes(bytes) : ''}">${ds.length} dataset${ds.length === 1 ? '' : 's'} · ${imgs} image${imgs === 1 ? '' : 's'}</span></span>
-        <span class="acts">
-          <button onclick="event.stopPropagation();editProjectDialog('${p.id}')" title="Edit colour and notes">&#9998;</button>
-          <button onclick="event.stopPropagation();addDatasetsDialog('${p.id}')" title="Add datasets to this project">&#43;</button>
-        </span></div>`;
-  }
-
-  const unfiled = datasetsOfProject(UNFILED);
-  if (unfiled.length) {
-    const imgs = unfiled.reduce((s, d) => s + (d.count || 0), 0);
-    html += `<div class="lrow" onclick="selectProject('${UNFILED}')" title="Datasets that are not in any project">
-        <span class="dot" style="background:var(--border)"></span>
-        <span class="body"><span class="nm" style="font-style:italic">Unfiled</span>
-          <span class="sub">${unfiled.length} dataset${unfiled.length === 1 ? '' : 's'} · ${imgs} image${imgs === 1 ? '' : 's'}</span></span>
-      </div>`;
-  }
-  return html;
 }
 
 function dsRowHtml(d, showProjects) {
@@ -3062,11 +3481,11 @@ function dsRowHtml(d, showProjects) {
       </span></div>`;
 }
 
+/* Selecting a project now just scopes the list. Everything else about a
+   project's life happens at the hub. */
 function selectProject(id) {
   state.curProject = id;
-  state.libTab = 'projects';          // drilling in happens IN the Projects tab
-  saveSettings();
-  renderTree();
+  setLibScope(id || 'all');
   if (!state.curDs) renderInspector();
 }
 
@@ -3886,11 +4305,15 @@ function datasetPanelHtml(ds) {
   imgs.forEach(r => { if (flags[r.flag] != null) flags[r.flag]++; });
   const dims = new Set(imgs.map(r => `${r.w}×${r.h}`));
 
-  const projChips = state.projects.map(p => {
-    const on = (ds.projectIds || []).includes(p.id);
-    return `<label class="ck" style="margin-right:.5rem"><input type="checkbox" ${on ? 'checked' : ''}
-      onchange="toggleDatasetProject('${ds.id}','${p.id}',this.checked)"> <span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}</label>`;
-  }).join('') || '<span class="note">No projects yet — make one in the <b>Projects</b> tab.</span>';
+  /* Read-only. Filing is the + on the dataset's row in the library, and the
+     hub. Three places to change the same relation is how two of them end up
+     disagreeing; this one says where the dataset sits and gets out of the way. */
+  const inProjs = (ds.projectIds || []).map(id => prById(id)).filter(Boolean);
+  const projChips = inProjs.length
+    ? inProjs.map(p => `<span class="pchip"><span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}</span>`).join(' ') +
+      ` <a class="note" href="${HUB_URL}" title="Projects are managed at the hub">manage &rsaquo;</a>`
+    : `<span class="note">Not in any project — use <b>+</b> on its row in the library, or
+       <a href="${HUB_URL}">the hub</a>.</span>`;
 
   return `
     <div class="insp-sec">
@@ -4850,7 +5273,6 @@ function newProject() {
            as the current project, so the very next dataset imported silently
            joined it — filing should happen by choice, not as a side effect of
            housekeeping. */
-        state.libTab = 'projects';
         render();
      } }]);
   setTimeout(() => { const el = $('npName'); if (el) el.focus(); }, 50);
@@ -4887,6 +5309,9 @@ async function toggleDatasetProject(dsId, pId, on) {
   else d.projectIds = d.projectIds.filter(x => x !== pId);
   await saveDataset(d);
   renderTree();
+  /* Joining a FOLDER project means the files belong on disk. Not awaited: the
+     tick has to land immediately; the copy reports its own progress. */
+  if (on) autoCopyIntoFolder([dsId]);
 }
 function confirmDeleteDataset(id) {
   const d = dsById(id);
@@ -5007,6 +5432,7 @@ function addToProjectDialog(dsId) {
         setStatus(ids.length
           ? `“${escapeHtml(d.name)}” is now in ${ids.length} project${ids.length === 1 ? '' : 's'}.`
           : `“${escapeHtml(d.name)}” is no longer in any project.`, 'success', 5000);
+        autoCopyIntoFolder([d.id]);
      } }]);
 }
 
@@ -5028,13 +5454,15 @@ function addDatasetsDialog(pId) {
     [{ label: 'Cancel', cls: 'btn-ghost' },
      { label: 'Save', cls: 'btn-primary', fn: async () => {
         const want = new Set(Array.from(document.querySelectorAll('.adChk')).filter(c => c.checked).map(c => c.value));
+        const joined = [];
         for (const d of state.datasets) {
           const has = (d.projectIds || []).includes(pId);
-          if (want.has(d.id) && !has) { d.projectIds = (d.projectIds || []).concat(pId); await saveDataset(d); }
+          if (want.has(d.id) && !has) { d.projectIds = (d.projectIds || []).concat(pId); await saveDataset(d); joined.push(d.id); }
           else if (!want.has(d.id) && has) { d.projectIds = d.projectIds.filter(x => x !== pId); await saveDataset(d); }
         }
         render();
         setStatus(`“${escapeHtml(p.name)}” now holds ${want.size} dataset${want.size === 1 ? '' : 's'}.`, 'success', 5000);
+        if (joined.length) autoCopyIntoFolder(joined);
      } }]);
 }
 
@@ -5372,13 +5800,23 @@ function wireMenuDismiss() {
    menu picks which hidden input to open. */
 function openAddMenu(ev) {
   const ds = state.curDs ? dsById(state.curDs) : null;
-  openMenuUnder(ev, [
+  const scope = libScope();
+  const p = (scope === 'all' || scope === UNFILED) ? null : prById(scope);
+  /* ONE entry point. There used to be a separate "+ Add datasets" button inside
+     the Projects tab; with that tab gone, bringing an existing dataset into the
+     project you are looking at belongs here, beside the other ways in. */
+  const items = [
     { title: ds ? 'Add to ' + ds.name : 'Add to a new dataset' },
     { label: '&#128247;&nbsp; Images&hellip;', fn: pickFiles },
     { label: '&#128193;&nbsp; Folder&hellip;', fn: pickFolder },
-    { sep: true },
-    { label: '&#43;&nbsp; New empty dataset&hellip;', fn: newDataset },
-  ]);
+  ];
+  if (p) {
+    items.push({ sep: true });
+    items.push({ label: '&#9776;&nbsp; From my library&hellip;', fn: () => addDatasetsDialog(p.id) });
+  }
+  items.push({ sep: true });
+  items.push({ label: '&#43;&nbsp; New empty dataset&hellip;', fn: newDataset });
+  openMenuUnder(ev, items);
 }
 
 /* ── Toolbar overflow ──────────────────────────────────────────────────────
@@ -5801,23 +6239,35 @@ function selectionDatasetItems(n) {
   ];
 }
 
+/* A subset is a NEW WAY OF LOOKING at images you already have, not a decision
+   to stop having them where they were. So copying is the default and the
+   original set is left intact — the destructive reading of "make a subset"
+   should never be the one that happens by accident.
+
+   Only the project you are working in is ticked. Ticking every project the
+   source belonged to filed the subset into places you were not thinking about,
+   and an accidental filing is quiet: nothing looks wrong until a project's
+   dataset list has something in it that nobody put there. */
 function newDatasetFromSelection() {
   const recs = targetRecs();
   if (!recs.length) return;
   const src = dsById(state.curDs);
-  const projs = (src && src.projectIds) || [];
+  const active = state.project ? state.project.id : null;
+  const folder = folderBacked();
   openModal(`New dataset from ${recs.length} image${recs.length === 1 ? '' : 's'}`,
     `<div class="row"><span class="mini-label">Name</span>
        <input type="text" id="nsName" style="flex:1 1 auto" value="${escapeHtml((src ? src.name : 'Selection') + ' — subset')}"></div>
      ${state.projects.length ? `<div style="margin-top:.7rem">
        <div class="mini-label" style="margin-bottom:.3rem">Projects</div>
        ${state.projects.map(p => `<label class="ck" style="display:flex"><input type="checkbox" class="nsProj" value="${p.id}"
-         ${projs.includes(p.id) ? 'checked' : ''}> <span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}</label>`).join('')}
+         ${p.id === active ? 'checked' : ''}> <span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}${
+           p.id === active ? ' <span class="note" style="margin-left:.3rem">— open now</span>' : ''}</label>`).join('')}
      </div>` : ''}
-     <label class="ck" style="display:flex;margin-top:.7rem"><input type="checkbox" id="nsCopy">
-       Keep them in “${escapeHtml(src ? src.name : '')}” as well (copies the stored files)</label>
-     <p class="note" style="margin-top:.5rem">Moving is the default: the images leave the current dataset. Copying
-     duplicates the stored bytes, so the library grows by the size of the selection.</p>`,
+     <label class="ck" style="display:flex;margin-top:.7rem"><input type="checkbox" id="nsCopy" checked>
+       Keep them in “${escapeHtml(src ? src.name : '')}” as well</label>
+     <p class="note" style="margin-top:.5rem">${folder
+       ? 'The files are copied into the new dataset’s folder inside the project, so it stands on its own. Unticking moves them instead — the originals are left on disk but no longer listed here.'
+       : 'Copying duplicates the stored bytes, so the library grows by the size of the selection. Unticking moves them instead.'}</p>`,
     [{ label: 'Cancel', cls: 'btn-ghost' },
      { label: 'Create', cls: 'btn-primary', fn: async () => {
         const name = ($('nsName') && $('nsName').value || '').trim() || 'New dataset';
@@ -5849,27 +6299,88 @@ function sendSelectionDialog(isMove) {
      } }]);
 }
 
-/* The one place that actually moves or copies. Copying duplicates the thumbnail
-   and the original blob under a fresh id; moving just repoints dsId, so it is
-   instant however large the selection. */
+/* Is the open project a connected folder project? Then a dataset created here
+   belongs on disk, and its images have to actually be there. */
+function folderBacked() {
+  return !!(state.project && state.project.store === 'folder' && state.projectHandle);
+}
+
+/* The one place that actually moves or copies.
+
+   The hard part is that an image record does not carry its own bytes — it
+   points at them, and WHERE it points depends on the dataset it belongs to. A
+   folder dataset's record says `fsFile: 'AH_0001.jpg'`, resolved against ITS
+   OWN folder. So moving a record between datasets by repointing `dsId` left it
+   pointing into a folder the file was not in, and copying one read `blobs` for
+   bytes that were never in the database — which is why a subset of a folder
+   dataset came out as a folder and a manifest with no images in it. Both
+   failed silently, which is the worst way for a library to fail.
+
+   So bytes are fetched through `sourceBlob` (the one seam that knows where
+   they live) and then PLACED according to what the target is. */
+async function placeBytes(rec, target, blob) {
+  if (target.fs && target.fs.slug) {
+    const dir = await fsDatasetDir(target, true);
+    const name = await fsUniqueName(dir, rec.origName || rec.name);
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(blob);
+    await w.close();
+    return { fsFile: name, blob: null };
+  }
+  return { fsFile: null, blob: blob };
+}
+
 async function sendSelectionTo(recs, targetId, isMove) {
   const target = dsById(targetId), src = dsById(state.curDs);
   if (!target) return;
   setStatus(`${isMove ? 'Moving' : 'Copying'} ${recs.length} image${recs.length === 1 ? '' : 's'}…`, 'progress');
 
-  if (isMove) {
+  /* A brand-new dataset in a connected folder project gets its folder here, so
+     the very first file has somewhere to go. */
+  if (!target.fs && folderBacked()) {
+    try { await fsWriteDataset(target, []); }
+    catch (e) { setStatus('Could not create that dataset in the project folder — ' +
+                          escapeHtml(e.message || String(e)), 'error', 9000); return; }
+  }
+
+  const crossing = !!(target.fs && target.fs.slug) !== !!(src && src.fs && src.fs.slug);
+  let failed = 0;
+
+  if (isMove && !crossing && !(target.fs && target.fs.slug)) {
+    /* Both in the browser: repointing is instant however large the selection. */
     recs.forEach(r => r.dsId = targetId);
     await dbPutMany('images', recs);
     const ids = new Set(recs.map(r => r.id));
     state.images = state.images.filter(r => !ids.has(r.id));
   } else {
+    const movedNames = [];
     for (let i = 0; i < recs.length; i++) {
       const r = recs[i], nid = uid('i_');
-      const [t, b] = await Promise.all([dbGet('thumbs', r.id), dbGet('blobs', r.id)]);
+      let bytes = null;
+      try { bytes = await sourceBlob(r.id, r); } catch (e) { bytes = null; }
+      if (!bytes) { failed++; continue; }
+      const placed = await placeBytes(r, target, bytes);
+      const t = await dbGet('thumbs', r.id);
       if (t) await dbPut('thumbs', { id: nid, blob: t.blob });
-      if (b) await dbPut('blobs', { id: nid, blob: b.blob });
-      await dbPut('images', Object.assign({}, r, { id: nid, dsId: targetId, added: Date.now() }));
+      if (placed.blob) await dbPut('blobs', { id: nid, blob: placed.blob });
+      await dbPut('images', Object.assign({}, r, {
+        id: nid, dsId: targetId, added: Date.now(), fsFile: placed.fsFile,
+      }));
+      if (isMove) movedNames.push(r);
       if (i % 5 === 0) { setProgress((i + 1) / recs.length); await sleep(0); }
+    }
+    if (isMove && movedNames.length) {
+      /* The source loses its records. Its FILES are never deleted — the same
+         rule removal follows — so a folder source records the exclusion and the
+         bytes stay on disk where you can still find them. */
+      const ids = movedNames.map(r => r.id);
+      for (let i = 0; i < ids.length; i += 300) await dbDelMany(['images', 'thumbs', 'blobs'], ids.slice(i, i + 300));
+      if (src && src.fs && src.fs.slug) {
+        src.excluded = (src.excluded || []).concat(movedNames.map(r => r.fsFile || r.origName || r.name));
+      }
+      const gone = new Set(ids);
+      state.images = state.images.filter(r => !gone.has(r.id));
     }
   }
   state.sel.clear(); state.cursor = null;
@@ -5878,10 +6389,23 @@ async function sendSelectionTo(recs, targetId, isMove) {
   target.count = await dbCountOf(target.id);
   await saveDataset(target);
   await recomputeSolar(target.id, true);        // the target may declare a different timezone
+
+  /* The manifest is rewritten NOW rather than left to the debounced autosave,
+     because a dataset whose folder holds files its dataset.json has not heard
+     of is a dataset another tool will open short. */
+  if (target.fs && target.fs.slug) {
+    try { await fsWriteDataset(target, await dbImagesOf(target.id)); } catch (e) {}
+  }
+  if (src && src.fs && src.fs.slug) {
+    try { await fsWriteDataset(src, await dbImagesOf(src.id)); } catch (e) {}
+  }
+
   await updateQuota();
   render();
-  setStatus(`${recs.length} image${recs.length === 1 ? '' : 's'} ${isMove ? 'moved' : 'copied'} to “${escapeHtml(target.name)}”.`,
-    'success', 6000);
+  const done = recs.length - failed;
+  setStatus(`${done} image${done === 1 ? '' : 's'} ${isMove ? 'moved' : 'copied'} to “${escapeHtml(target.name)}”` +
+    (failed ? ` · <b>${failed} could not be read</b>` : '') + '.',
+    failed ? 'error' : 'success', failed ? 9000 : 6000);
 }
 
 /* ── Right-click on a tile ────────────────────────────────────────────────── */
@@ -6305,14 +6829,50 @@ async function loadProjects() {
   return state.projects;
 }
 
-/* The project the hub says is open. This does NOT ask for folder permission —
-   see connectProjectFolder for why that has to wait for a click. */
+/* The project the hub says is open.
+
+   This ASKS the browser whether the folder grant still stands, which needs no
+   user gesture, and connects silently when it does — Chrome increasingly keeps
+   that grant for a folder you have used before, so most reloads now open
+   straight into the project with nothing to press. What it still never does is
+   REQUEST permission: that needs a gesture, and calling it without one fails
+   silently in a way indistinguishable from a folder that has gone away. */
 async function loadCurrentProject() {
   let id = null;
   try { id = await vomCurrentId(); } catch (e) {}
   state.project = id ? (prById(id) || await vomProjectGet(id)) : null;
   state.projectAccess = (state.project && state.project.store === 'browser') ? 'ok' : 'unknown';
+  if (state.project && state.project.store === 'folder') {
+    let q = { ok: false };
+    try { q = await vomQuietAccess(state.project); } catch (e) {}
+    if (q.ok) {
+      state.projectHandle = q.handle;
+      state.projectAccess = 'ok';
+    }
+  }
   return state.project;
+}
+
+/* Everything connecting normally does, minus the permission prompt — run after
+   a silent reconnect so the folder's datasets appear without a click. */
+async function afterFolderConnected(quiet) {
+  const p = state.project;
+  if (!p || state.projectAccess !== 'ok' || !state.projectHandle) return;
+  try {
+    const n = await scanProjectFolder();
+    for (const ds of state.datasets.filter(isFolderDs)) await syncFolderDataset(ds, true);
+    if (state.curDs) state.images = await dbImagesOf(state.curDs);
+    if (!quiet) {
+      setStatus(`Connected to <b>${escapeHtml(p.folderName || p.name)}</b> · ${n} dataset(s). ` +
+        `Changes are saved there as you make them.`, 'success', 6000);
+    }
+  } catch (e) {
+    /* Said out loud even on the silent path: Drive's provider hands over files
+       that are not fully downloaded, and a library that quietly came up four
+       frames short is worse than one that says it could not read them. */
+    setStatus('The project folder could not be read fully — ' +
+      escapeHtml(e.message || String(e)), 'error', 9000);
+  }
 }
 
 /* ── Folder access ────────────────────────────────────────────────────────
@@ -6332,22 +6892,8 @@ async function connectProjectFolder() {
     state.projectHandle = r.handle;
     state.projectAccess = 'ok';
     setStatus(`Connected to <b>${escapeHtml(p.folderName || p.name)}</b>. Reading its datasets…`, 'progress');
-    /* Connecting is the first moment the folder can be read at all, so this is
-       where its datasets appear. Failures are reported rather than swallowed:
-       Drive's provider will hand over files that are not fully downloaded, and
-       a dataset that quietly loses four frames is far worse than one that says
-       it could not read them. */
-    try {
-      const n = await scanProjectFolder();
-      for (const ds of state.datasets.filter(isFolderDs)) await syncFolderDataset(ds, true);
-      if (state.curDs) state.images = await dbImagesOf(state.curDs);
-      render();
-      setStatus(`Connected to <b>${escapeHtml(p.folderName || p.name)}</b> · ${n} dataset(s). ` +
-        `Changes are saved there as you make them.`, 'success', 6000);
-    } catch (e) {
-      setStatus('Connected, but the folder could not be read fully — ' +
-        escapeHtml(e.message || String(e)), 'error', 9000);
-    }
+    await afterFolderConnected(false);
+    render();
   } else {
     state.projectHandle = null;
     state.projectAccess = 'denied';
@@ -6462,7 +7008,13 @@ function setSaveState(s, detail) {
 }
 function autosave() {
   if (!state.project) { setSaveState('idle'); return; }
-  if (state.project.store !== 'folder') { setSaveState('saved'); return; }
+  if (state.project.store !== 'folder') {
+    setSaveState('saved');
+    /* A browser project is already continuous in IndexedDB. What this adds is
+       the mirror, if one is set — same debounce, same reason. */
+    if (state.project.mirror && typeof vomMirrorTouch === 'function') vomMirrorTouch(state.project);
+    return;
+  }
   clearTimeout(_psaveTimer);
   setSaveState('saving');
   _psaveTimer = setTimeout(async () => {
@@ -6491,10 +7043,12 @@ function renderProjectBar() {
   const el = $('projBar');
   if (!el) return;
   const p = state.project;
+  const hub = `<a class="pb-hub" href="${HUB_URL}"
+       title="Create, rename, fill and delete projects"><span class="pb-hub-i">&#9638;</span>Projects</a>`;
   if (!p) {
     el.classList.add('empty');
-    el.innerHTML = `<span class="pb-none">No project open</span>` +
-      `<a class="pb-link" href="${HUB_URL}">Start or open one &rsaquo;</a>`;
+    el.innerHTML = `<span class="pb-none">No project open — this is your whole library</span>` +
+      `<span class="pb-mid"></span>` + hub;
     return;
   }
   el.classList.remove('empty');
@@ -6507,16 +7061,19 @@ function renderProjectBar() {
     `<span class="pb-name" style="border-bottom-color:${p.colour || 'var(--accent)'}">${escapeHtml(p.name)}</span>` +
     pill +
     (p.store === 'folder' && p.folderName ? `<span class="pb-sub">${escapeHtml(p.folderName)}</span>` : '') +
+    (p.mirror ? `<span class="pb-pill mirror" title="Mirrored to ${escapeHtml(p.mirror.name)}">mirrored</span>` : '') +
     (needsConnect
-      ? `<button class="btn btn-outline btn-sm" onclick="connectProjectFolder()">Connect folder</button>`
+      ? `<button class="btn btn-outline btn-sm pb-warn" onclick="connectProjectFolder()">Reconnect folder</button>`
       : `<span class="psave" id="projSave"></span>`) +
-    (p.store === 'folder' && !needsConnect
-      ? `<button class="btn btn-ghost btn-sm" onclick="rescanProjectFolder()"
-           title="Read the folder again — for changes made outside this tab">Rescan</button>` +
-        (isFolderDs(dsById(state.curDs)) ? '' :
-        `<button class="btn btn-ghost btn-sm" onclick="copyDatasetToFolder()"
-           title="Copy this browser-held dataset's files into the project folder">Copy into folder</button>`) : '') +
-    `<a class="pb-link" href="${HUB_URL}">Manage projects &rsaquo;</a>`;
+    /* Actions in the middle, the hub pinned right. No "Copy into folder" any
+       more: filing a dataset into a folder project copies it, so a button
+       asking you to do by hand what the project already promised was only ever
+       a sign the promise was not kept. */
+    `<span class="pb-mid">` +
+      (p.store === 'folder' && !needsConnect
+        ? `<button class="btn btn-ghost btn-sm" onclick="rescanProjectFolder()"
+             title="Read the folder again — for changes made outside this tab">Refresh</button>` : '') +
+    `</span>` + hub;
   if (!needsConnect) setSaveState(_psaveState === 'idle' ? 'saved' : _psaveState);
 }
 
@@ -6755,25 +7312,100 @@ async function excludeFromFolderDataset(ds, names) {
 /* Copy the open dataset into the project folder, images and all. Explicit
    rather than automatic: it can move hundreds of megabytes, and a background
    task that quietly does that is not a kindness. */
-async function copyDatasetToFolder() {
-  const p = state.project, ds = dsById(state.curDs);
-  if (!p || p.store !== 'folder') { setStatus('This is not a folder project.', 'error', 5000); return; }
-  if (!ds) { setStatus('Open a dataset first.', 'error', 5000); return; }
-  if (state.projectAccess !== 'ok' && !(await connectProjectFolder())) return;
+/* ── Joining a folder project puts a dataset ON DISK ──────────────────────
+   Filing a browser-held dataset into a folder project used to leave it in the
+   browser with a "Copy into folder" button beside it — so a project that says
+   it lives in a folder had datasets that did not, and the only sign was a
+   button you had to know to press.
+
+   Now it copies itself. The records are then repointed at the folder and their
+   browser copies FREED, because keeping both would mean two originals and a
+   question about which one is right — and not filling browser storage is the
+   entire reason for choosing a folder project.
+
+   The files it writes are the untouched originals; nothing is re-encoded, so
+   this cannot alter a single measured pixel. */
+async function adoptIntoFolder(ds, imgs, onProgress) {
+  const dir = await fsWriteDataset(ds, imgs);          // allocates the slug on first write
+  const taken = new Set();
+  for await (const [n, h] of dir.entries()) if (h.kind === 'file') taken.add(n);
+
+  const changed = [];
+  let written = 0;
+  for (let i = 0; i < imgs.length; i++) {
+    if (state.job && state.job.cancel) break;
+    const r = imgs[i];
+    if (r.fsFile) continue;                             // already on disk
+    let bytes = null;
+    try { bytes = await sourceBlob(r.id, r); } catch (e) { bytes = null; }
+    if (!bytes) continue;
+    let name = r.origName || r.name;
+    if (taken.has(name)) name = await fsUniqueName(dir, name);
+    taken.add(name);
+    const fh = await dir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(bytes);
+    await w.close();
+    r.fsFile = name;
+    changed.push(r);
+    written++;
+    if (onProgress) onProgress(i + 1, imgs.length);
+  }
+  if (changed.length) {
+    await dbPutMany('images', changed);
+    /* Only after every write has closed. Freeing the browser copy before the
+       file is safely on disk would be the one ordering that can lose an image. */
+    const ids = changed.map(r => r.id);
+    for (let i = 0; i < ids.length; i += 300) await dbDelMany(['blobs'], ids.slice(i, i + 300));
+  }
+  await fsWriteDataset(ds, imgs);                       // manifest matches the folder
+  return written;
+}
+
+/* Called wherever a dataset can join a project. Silent and instant when there
+   is nothing to do, which is most of the time. */
+async function autoCopyIntoFolder(dsIds) {
+  const p = state.project;
+  if (!p || p.store !== 'folder' || state.projectAccess !== 'ok' || !state.projectHandle) return 0;
+  const todo = (dsIds || []).map(dsById)
+    .filter(d => d && (d.projectIds || []).includes(p.id) && !isFolderDs(d));
+  if (!todo.length) return 0;
+
   state.job = { cancel: false };
-  setStatus(`Copying <b>${escapeHtml(ds.name)}</b> into the project folder…`, 'progress');
+  let total = 0, failed = 0;
   try {
-    const n = await fsWriteImages(ds, state.images, (i, total) => {
-      setStatus(`Copying ${i} / ${total}…`, 'progress');
-      setProgress(i / total);
-    });
-    setStatus(n ? `Copied ${n} file(s) into the project folder.`
-                : 'Everything was already there — nothing to copy.', 'success', 6000);
-  } catch (e) {
-    setStatus('Could not write to the project folder — ' + escapeHtml(e.message || String(e)), 'error', 9000);
+    for (const ds of todo) {
+      const imgs = ds.id === state.curDs ? state.images : await dbImagesOf(ds.id);
+      if (!imgs.length) { await fsWriteDataset(ds, imgs); continue; }
+      setSaveState('saving', `Copying ${ds.name} into ${p.folderName || p.name}`);
+      setStatus(`Copying <b>${escapeHtml(ds.name)}</b> into ` +
+                `<b>${escapeHtml(p.folderName || p.name)}</b>…`, 'progress');
+      try {
+        total += await adoptIntoFolder(ds, imgs, (i, n) => {
+          setStatus(`Copying <b>${escapeHtml(ds.name)}</b> — ${i} / ${n}…`, 'progress');
+          setProgress(i / n);
+        });
+        if (ds.id === state.curDs) state.images = await dbImagesOf(ds.id);
+      } catch (e) {
+        failed++;
+        setStatus(`Could not copy <b>${escapeHtml(ds.name)}</b> into the project folder — ` +
+          escapeHtml(e.message || String(e)), 'error', 9000);
+      }
+    }
   } finally {
     state.job = null;
   }
+  await updateQuota();
+  renderProjectBar();
+  render();
+  if (!failed) {
+    setSaveState('saved');
+    setStatus(total
+      ? `<b>${total}</b> file(s) copied into <b>${escapeHtml(p.folderName || p.name)}</b>. ` +
+        `They are read from there now, so they no longer count against browser storage.`
+      : 'Already in the project folder.', 'success', 7000);
+  }
+  return total;
 }
 
 /* ── Init ─────────────────────────────────────────────────────────────────
@@ -6791,6 +7423,11 @@ async function initProjects() {
     state.project = null;
   }
   renderProjectBar();
+  /* Not awaited: the library must paint whether or not a folder is reachable,
+     and reading a project folder over a network drive can take a while. */
+  if (state.projectAccess === 'ok' && state.projectHandle) {
+    afterFolderConnected(true).then(render);
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -6813,25 +7450,28 @@ function effectiveDest() {
   return projectWritable() ? 'project' : 'download';
 }
 
+/* The Manager's equivalent of the other tools' split button. It is a dialog
+   rather than a button, so the destination is a line in the dialog — same three
+   choices, same words, so the two never read as different features. */
 function outputDestHtml() {
   if (!state.project) {
-    return `<p class="note" style="margin-top:.5rem">No project open, so this downloads as usual.
-      <a href="${HUB_URL}">Start one</a> to keep outputs with the work that made them.</p>`;
+    return `<p class="note" style="margin-top:.5rem">No project open, so this downloads to your computer.
+      <a href="${HUB_URL}">Start a project</a> to keep outputs with the work that made them.</p>`;
   }
   const p = state.project;
   const blocked = p.store === 'folder' && state.projectAccess !== 'ok';
   const cur = effectiveDest();
   const opt = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
   return `<div class="row" style="margin-top:.5rem">
-      <span class="mini-label">Send to</span>
+      <span class="mini-label">Save as</span>
       <select id="expDest" onchange="outputDest.mode=this.value">
-        ${opt('project', `the project — ${escapeHtml(p.name)}`)}
-        ${opt('download', 'Downloads, as usual')}
-        ${opt('both', 'both')}
+        ${opt('project', `into ${escapeHtml(p.name)}`)}
+        ${opt('download', 'download to computer')}
+        ${opt('both', 'save to both')}
       </select>
     </div>` +
     (blocked ? `<div class="warn" style="margin-top:.4rem">The project folder is not connected, so this will
-       download instead. <b>Connect folder</b> in the project bar first to save it there.</div>` : '');
+       download instead. <b>Reconnect folder</b> in the project bar first to save it there.</div>` : '');
 }
 
 /* One call for every tool output: puts the file where it was asked to go and
