@@ -81,13 +81,12 @@ body.rzing *{cursor:col-resize !important}
 /* ── Library head and scope ────────────────────────────────────────────────
    The two tabs are gone. Organising projects lives at the hub now, so the
    sidebar is one list with a filter over it. */
-.lib-head{flex:0 0 auto;display:flex;align-items:center;padding:.5rem .7rem;
+.lib-scope{flex:0 0 auto;display:flex;align-items:center;gap:.5rem;padding:.55rem .7rem;
   background:var(--bg-page);border-bottom:1px solid var(--border)}
-.lib-scope{display:flex;align-items:center;gap:.4rem;padding:.5rem .7rem .3rem}
-.lib-scope select{flex:1 1 auto;min-width:0;font:inherit;font-size:.8rem;padding:.24rem .4rem;
-  border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-white);color:var(--text)}
-.lib-scope .lib-hub{flex:0 0 auto;font-size:.78rem;color:var(--primary);text-decoration:none;white-space:nowrap}
-.lib-scope .lib-hub:hover{text-decoration:underline}
+.lib-where{flex:1 1 auto;min-width:0;font-size:.86rem;color:var(--text);line-height:1.25;
+  overflow:hidden;text-overflow:ellipsis}
+.lib-where b.lib-proj{font-weight:600;border-bottom:2px solid var(--accent);padding-bottom:1px}
+.lib-scope .btn{flex:0 0 auto}
 .lib-outside{padding:.3rem .7rem;font-size:.74rem;color:var(--text-muted);background:var(--warning-bg);
   border-bottom:1px solid var(--border)}
 .lib-outside a{color:var(--primary);cursor:pointer;text-decoration:underline}
@@ -537,7 +536,7 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
 
   <!-- ══════════ LIBRARY SIDEBAR ══════════ -->
   <aside id="sidebar">
-    <div class="lib-head"><span class="pane-title">Library</span></div>
+
     <div class="pane-scroll" id="treeScroll">
       <div id="tree"></div>
     </div>
@@ -561,9 +560,6 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
   <main id="centre">
 
     <div class="gridbar" id="gridbar">
-      <button class="btn btn-primary btn-sm" onclick="openAddMenu(event)"
-              title="Add images or a whole folder to this dataset">+ Add&nbsp;&#9662;</button>
-      <span class="sep" data-prio="3"></span>
 
       <span class="ctrl-grp" id="grpArrange" data-prio="3"><span class="gb-label">Arrange</span>
       <select id="sortSel" class="sm" onchange="setSort(this.value)" title="Sort order for this dataset"></select>
@@ -1318,14 +1314,62 @@ async function vomOpenDataset(p,handle,dsId,onProgress){
   if(!db) return [];
   var recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(dsId);});
   (recs||[]).sort(function(a,b){return _vomNat(a.name,b.name);});
-  var out=[];
+
+  /* A dataset belongs to a LIST of projects but its bytes live in exactly one
+     place. Once it has been adopted into a folder project the files are on disk
+     and the browser copies are freed — so a second project listing the same
+     dataset finds records with `fsFile` and no blob behind them.
+
+     That used to be a `continue`, which handed back an empty array: the picker
+     listed "Shared set · 3 images" and opened nothing, silently. So the folder
+     is followed instead, through whichever project owns it, and when it cannot
+     be reached this SAYS SO rather than pretending the dataset is empty. */
+  var dir=null, dirTried=false;
+  async function folderDir(){
+    if(dirTried) return dir;
+    dirTried=true;
+    var ds=null;
+    try{ ds=await _vomMgrReq(db,'datasets',function(s){return s.get(dsId);}); }catch(e){}
+    if(!ds||!ds.fs||!ds.fs.slug) return null;
+    var owners=(ds.projectIds||[]).slice();
+    if(p.store==='folder') owners.unshift(p.id);
+    for(var i=0;i<owners.length;i++){
+      var op=null;
+      try{ op=await vomProjectGet(owners[i]); }catch(e){}
+      if(!op||op.store!=='folder') continue;
+      var q=await vomQuietAccess(op);
+      if(!q.ok) continue;
+      try{
+        var root=await q.handle.getDirectoryHandle('datasets',{create:false});
+        dir=await root.getDirectoryHandle(ds.fs.slug);
+        return dir;
+      }catch(e){}
+    }
+    return null;
+  }
+
+  var out=[], missing=0;
   for(var j=0;j<recs.length;j++){
     var r=recs[j],b=null;
+    if(r.fsFile){
+      var d=await folderDir();
+      if(d){
+        try{ out.push(await (await d.getFileHandle(r.fsFile)).getFile()); }
+        catch(e){ missing++; }
+      } else missing++;
+      if(onProgress) onProgress(j+1,recs.length);
+      continue;
+    }
     try{ b=await _vomMgrReq(db,'blobs',function(s){return s.get(r.id);}); }catch(err){}
-    if(!b||!b.blob) continue;         /* a folder-held record inside a browser project */
+    if(!b||!b.blob){ missing++; continue; }
     out.push(new File([b.blob],r.origName||r.name,
       {type:r.type||b.blob.type||'image/jpeg',lastModified:r.dateMs||r.added||Date.now()}));
     if(onProgress) onProgress(j+1,recs.length);
+  }
+  if(!out.length && missing){
+    throw new Error('This dataset’s images live in a project folder on your computer, and that folder ' +
+      'is not reachable from here. Open the folder project once — the click is what lets the browser ' +
+      'ask for permission — and it will work from every project it belongs to.');
   }
   return out;
 }
@@ -1580,7 +1624,7 @@ async function vomOpenOutput(p,handle,o){
    the Analyzer would report.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const MANAGER_VERSION = 'v3.1';
+const MANAGER_VERSION = 'v3.2';
 const ANALYZER_URL   = 'https://www.jonathancinnamon.com/image-colour-analyzer/';
 
 /* ══════════ Small utilities ══════════ */
@@ -2626,7 +2670,8 @@ const state = {
   images: [],            // records for the OPEN dataset only
   curDs: null,           // dataset id
   curProject: null,      // project id being browsed, or null for "all datasets"
-  libScope: null,        // which project the library list is scoped to (null = follow the open one)
+  libScope: null,        // a TRANSIENT override of the list's scope; null = follow the open project
+  libScopeFor: null,     // which project that override was made for
   sel: new Set(),        // selected image ids
   cursor: null,          // keyboard cursor image id
   sort: 'name',
@@ -2648,7 +2693,7 @@ const state = {
   job: null,             // running import/export job {cancel:false}
 };
 
-const SETTINGS_KEYS = ['sort', 'sortDir', 'group', 'tileSize', 'fitMode', 'inspectorOpen', 'curDs', 'curProject', 'libScope', 'sideW', 'inspW'];
+const SETTINGS_KEYS = ['sort', 'sortDir', 'group', 'tileSize', 'fitMode', 'inspectorOpen', 'curDs', 'curProject', 'sideW', 'inspW'];
 let _saveTimer = null;
 function saveSettings() {
   clearTimeout(_saveTimer);
@@ -3419,34 +3464,45 @@ const UNFILED = '__unfiled__';
    Drilling into a project inside the Manager is no longer something it does. */
 function setLibTab() { renderTree(); }
 
+/* The list FOLLOWS the open project. With the dropdown gone there is no filter
+   to leave set, and a remembered scope pointing at a project you are no longer
+   in is one of the ways datasets appeared to vanish. `state.libScope` survives
+   only as a transient override — the "show all datasets" escape hatch — and is
+   dropped the moment the open project changes. */
 function libScope() {
-  /* A filter still pointing at a project that has since been deleted would show
-     an empty library, which looks exactly like data loss. */
+  const def = defaultScope();
   const s = state.libScope;
-  if (s && s !== 'all' && s !== UNFILED && !prById(s)) return defaultScope();
-  return s || defaultScope();
+  if (!s) return def;
+  if (state.libScopeFor !== (state.project ? state.project.id : null)) return def;
+  if (s !== 'all' && s !== UNFILED && !prById(s)) return def;
+  return s;
 }
 function defaultScope() { return state.project ? state.project.id : 'all'; }
-function setLibScope(v) { state.libScope = v; saveSettings(); renderTree(); }
+function setLibScope(v) {
+  state.libScope = v;
+  state.libScopeFor = state.project ? state.project.id : null;
+  renderTree();
+}
 
 function scopedDatasets() {
   const s = libScope();
   return s === 'all' ? state.datasets : datasetsOfProject(s);
 }
 
+/* The sidebar head. No scope dropdown and no Projects link: switching what is
+   open changes where every tool saves, so it belongs at the hub with the rest of
+   a project's life — not on a control that looks like a filter. What is left
+   says WHAT YOU ARE LOOKING AT and offers the one thing you do here. */
 function scopeBarHtml() {
   const s = libScope();
-  const opt = (v, label, n) =>
-    `<option value="${v}"${s === v ? ' selected' : ''}>${escapeHtml(label)}${n == null ? '' : ` (${n})`}</option>`;
-  let opts = opt('all', 'All datasets', state.datasets.length);
-  for (const p of state.projects) opts += opt(p.id, p.name, datasetsOfProject(p.id).length);
-  const un = datasetsOfProject(UNFILED).length;
-  if (un) opts += opt(UNFILED, 'Not in any project', un);
+  const p = (s === 'all' || s === UNFILED) ? null : prById(s);
+  const where = p
+    ? `Datasets in <b class="lib-proj" style="border-bottom-color:${p.colour || 'var(--accent)'}">${escapeHtml(p.name)}</b>`
+    : (s === UNFILED ? 'Datasets in no project' : 'All datasets');
   return `<div class="lib-scope">
-      <select id="libScopeSel" onchange="setLibScope(this.value)"
-              title="Which datasets this list shows">${opts}</select>
-      <a class="lib-hub" href="${HUB_URL}"
-         title="Create, rename, delete and fill projects">Projects &rsaquo;</a>
+      <span class="lib-where">${where}</span>
+      <button class="btn btn-primary btn-sm" onclick="openAddMenu(event)"
+              title="Add images, a folder, or a dataset from your library">+ Add&nbsp;&#9662;</button>
     </div>`;
 }
 
@@ -5314,7 +5370,7 @@ function newProject() {
 }
 function newDataset() {
   const opts = state.projects.map(p => `<label class="ck" style="display:flex"><input type="checkbox" class="ndProj" value="${p.id}"
-      ${state.curProject === p.id && p.id !== UNFILED ? 'checked' : ''}> <span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}</label>`).join('');
+      ${state.project && state.project.id === p.id ? 'checked' : ''}> <span style="color:${p.colour}">■</span> ${escapeHtml(p.name)}</label>`).join('');
   openModal('New dataset',
     `<div class="row"><span class="mini-label">Name</span>
        <input type="text" id="ndName" style="flex:1 1 auto" placeholder="name this dataset"></div>
@@ -6225,7 +6281,11 @@ function chooseImportTarget(files) {
         <input type="text" id="impNewName" style="width:100%" value="${escapeHtml(suggested)}"
                onfocus="document.querySelector('input[value=new]').checked=true"></div>
 
-      <p class="note" style="margin-top:.7rem">Nothing is decoded until you choose. Press Enter to accept the
+      ${state.project ? `<p class="note" style="margin-top:.55rem">A new dataset joins
+        <b style="color:${state.project.colour || 'var(--accent)'}">■</b>
+        <b>${escapeHtml(state.project.name)}</b>, the project you have open.</p>` : ''}
+
+      <p class="note" style="margin-top:.5rem">Nothing is decoded until you choose. Press Enter to accept the
       selected option.</p>`;
 
     openModal('Where should these images go?', body, [
@@ -6240,7 +6300,13 @@ function chooseImportTarget(files) {
             return;
           }
           const name = ($('impNewName') && $('impNewName').value || '').trim() || suggested;
-          const inProject = state.curProject && state.curProject !== UNFILED ? [state.curProject] : [];
+          /* THE OPEN PROJECT, not `state.curProject`. That was the drill-in
+             state of the Projects tab, and when that tab was retired nothing
+             set it any more — so every dataset imported with a project open got
+             `projectIds: []`. The hub then honestly reported zero datasets and
+             the tools offered nothing to open, which is exactly how it was
+             reported. Importing into a project you have open means joining it. */
+          const inProject = state.project ? [state.project.id] : [];
           const ds = await createDataset(name, inProject);
           resolve(ds.id);
       } },
