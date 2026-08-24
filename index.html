@@ -894,23 +894,41 @@ async function _vomUnique(dir,name){
 }
 
 /* o = {tool, name, blob, runId}. Returns what the run log should record. */
+/* Outputs are filed under the dataset they came from:
+
+       outputs/image-colour-analyzer/Ridge-evening/clusters.csv
+       outputs/image-colour-analyzer/Valley-bottom/clusters.csv
+
+   Two datasets measured with the same settings produce the same filenames, and
+   before this they landed in one directory where the second became
+   `clusters_2.csv` — a name that says nothing about which set it describes. In
+   a folder project those are files in Finder, so the only thing that can tell
+   them apart is where they sit.
+
+   An output made with no dataset open has no such folder and goes directly
+   under the tool, which is the honest place for it. */
 async function vomSaveOutput(p,handle,o){
   if(!p) throw new Error('no project open');
+  var dsName=(o.datasetName||'').trim();
+  var seg=dsName?vomSlug(dsName):'';
   if(p.store==='folder'){
     if(!handle) throw new Error('the project folder is not connected');
-    var dir=await _vomDirFor(handle,['outputs',o.tool]);
+    var names=seg?['outputs',vomSlug(o.tool),seg]:['outputs',vomSlug(o.tool)];
+    var dir=await _vomDirFor(handle,names);
     var name=await _vomUnique(dir,o.name);
     var fh=await dir.getFileHandle(name,{create:true});
     var w=await fh.createWritable();
     await w.write(o.blob);
     await w.close();
-    return {name:name, path:'outputs/'+o.tool+'/'+name, size:o.blob.size, where:'folder'};
+    return {name:name, path:names.join('/')+'/'+name, size:o.blob.size,
+            dataset:dsName, where:'folder'};
   }
   var rec={id:'o_'+Date.now().toString(36)+Math.random().toString(36).slice(2,8),
            projectId:p.id, tool:o.tool, runId:o.runId||null, name:o.name,
+           dataset:dsName, datasetId:o.datasetId||null,
            type:o.blob.type||'', size:o.blob.size, blob:o.blob, created:Date.now()};
   await _vomTx('outputs','readwrite',function(s){return s.put(rec);});
-  return {name:o.name, id:rec.id, size:rec.size, where:'browser'};
+  return {name:o.name, id:rec.id, size:rec.size, dataset:dsName, where:'browser'};
 }
 
 async function vomLogRun(p,handle,run){
@@ -964,7 +982,8 @@ async function vomOutputs(p,handle){
   if(!p) return [];
   if(p.store!=='folder'){
     var os=await _vomIdx('outputs',p.id);
-    return os.map(function(o){return {tool:o.tool,name:o.name,size:o.size,created:o.created,id:o.id};})
+    return os.map(function(o){return {tool:o.tool,name:o.name,size:o.size,created:o.created,
+                                      dataset:o.dataset||'',id:o.id};})
              .sort(function(a,b){return b.created-a.created;});
   }
   if(!handle) return [];
@@ -973,11 +992,23 @@ async function vomOutputs(p,handle){
     var root=await handle.getDirectoryHandle('outputs',{create:true});
     for await (var t of root.entries()){
       if(t[1].kind!=='directory') continue;
+      /* Two levels now: a file directly under the tool came from no dataset;
+         one a level deeper is filed under the dataset that produced it. Both
+         forms are read, so folders written before this still list. */
       for await (var f of t[1].entries()){
-        if(f[1].kind!=='file') continue;
-        var file=await f[1].getFile();
-        list.push({tool:t[0],name:f[0],size:file.size,created:file.lastModified,
-                   path:'outputs/'+t[0]+'/'+f[0]});
+        if(f[1].kind==='file'){
+          var file=await f[1].getFile();
+          list.push({tool:t[0],name:f[0],size:file.size,created:file.lastModified,
+                     dataset:'',path:'outputs/'+t[0]+'/'+f[0]});
+          continue;
+        }
+        if(f[1].kind!=='directory') continue;
+        for await (var g of f[1].entries()){
+          if(g[1].kind!=='file') continue;
+          var gf=await g[1].getFile();
+          list.push({tool:t[0],name:g[0],size:gf.size,created:gf.lastModified,
+                     dataset:f[0],path:'outputs/'+t[0]+'/'+f[0]+'/'+g[0]});
+        }
       }
     }
   }catch(err){}
@@ -1522,9 +1553,13 @@ async function vomOpenOutput(p,handle,o){
   if(!p||!o) return null;
   if(p.store==='folder'){
     if(!handle) throw new Error('the project folder is not connected');
-    var root=await handle.getDirectoryHandle('outputs',{create:false});
-    var td=await root.getDirectoryHandle(o.tool);
-    return await (await td.getFileHandle(o.name)).getFile();
+    /* Walk the path the listing recorded rather than assuming a depth — an
+       output filed under a dataset sits one level deeper than one that is not,
+       and guessing wrong reads as "the file is gone". */
+    var parts=(o.path||('outputs/'+o.tool+'/'+o.name)).split('/');
+    var d=handle;
+    for(var i=0;i<parts.length-1;i++) d=await d.getDirectoryHandle(parts[i]);
+    return await (await d.getFileHandle(parts[parts.length-1])).getFile();
   }
   var rec=await _vomTx('outputs','readonly',function(s){return s.get(o.id);});
   if(!rec||!rec.blob) return null;
@@ -1545,7 +1580,7 @@ async function vomOpenOutput(p,handle,o){
    the Analyzer would report.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const MANAGER_VERSION = 'v3.0';
+const MANAGER_VERSION = 'v3.1';
 const ANALYZER_URL   = 'https://www.jonathancinnamon.com/image-colour-analyzer/';
 
 /* ══════════ Small utilities ══════════ */
@@ -4926,7 +4961,7 @@ async function runExport() {
   await sleep(10);
   const zip = buildZipStore(files);
   const dsName = (ds ? ds.name : 'images').replace(/[^\w\-]+/g, '-').replace(/^-|-$/g, '');
-  const where = await deliverOutput(zip, `${dsName}_${todayStamp()}.zip`, {
+  const where = await deliverOutput(zip, `${dsName}.zip`, {
     tool: 'manager',
     params: { scope: exportOpts.scope, format: exportOpts.format,
               maxDim: exportOpts.maxDim || 'unchanged',
@@ -4987,7 +5022,7 @@ async function exportCsv(recs, label) {
   const ds = dsById(state.curDs);
   const name = ((ds ? ds.name : 'images') + '_' + (label || 'metadata')).replace(/[^\w\-]+/g, '-');
   const where = await deliverOutput(new Blob([csvFor(recs)], { type: 'text/csv' }),
-    `${name}_${todayStamp()}.csv`, { tool: 'manager', params: { rows: recs.length, kind: label || 'metadata' } });
+    `${name}.csv`, { tool: 'manager', params: { rows: recs.length, kind: label || 'metadata' } });
   setStatus(`Metadata CSV for ${recs.length} image${recs.length === 1 ? '' : 's'} — ${where.join(' and ')}.`, 'success', 6000);
 }
 
@@ -5805,8 +5840,10 @@ function openAddMenu(ev) {
   /* ONE entry point. There used to be a separate "+ Add datasets" button inside
      the Projects tab; with that tab gone, bringing an existing dataset into the
      project you are looking at belongs here, beside the other ways in. */
+  /* No "Add to <dataset>" title. Every one of these asks where the images
+     should go once it has them, so a heading claiming the destination was
+     already decided was simply wrong. */
   const items = [
-    { title: ds ? 'Add to ' + ds.name : 'Add to a new dataset' },
     { label: '&#128247;&nbsp; Images&hellip;', fn: pickFiles },
     { label: '&#128193;&nbsp; Folder&hellip;', fn: pickFolder },
   ];
@@ -7488,7 +7525,12 @@ async function deliverOutput(blob, filename, meta) {
         throw new Error('the project folder is not connected');
       }
       const saved = await vomSaveOutput(state.project, state.projectHandle,
-        { tool: (meta && meta.tool) || 'manager', name: filename, blob });
+        { tool: (meta && meta.tool) || 'manager', name: filename, blob,
+          /* Filed under the dataset it came from, so two sets exported with the
+             same settings do not produce two files of the same name in one
+             directory where only a _2 suffix tells them apart. */
+          datasetName: (dsById(state.curDs) || {}).name || '',
+          datasetId: state.curDs || null });
       await vomLogRun(state.project, state.projectHandle, {
         tool: (meta && meta.tool) || 'manager',
         version: MANAGER_VERSION,
