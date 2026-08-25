@@ -81,12 +81,28 @@ body.rzing *{cursor:col-resize !important}
 /* ── Library head and scope ────────────────────────────────────────────────
    The two tabs are gone. Organising projects lives at the hub now, so the
    sidebar is one list with a filter over it. */
-.lib-scope{flex:0 0 auto;display:flex;align-items:center;gap:.5rem;padding:.55rem .7rem;
+.lib-scope{flex:0 0 auto;display:block;padding:.55rem .7rem;
   background:var(--bg-page);border-bottom:1px solid var(--border)}
-.lib-where{flex:1 1 auto;min-width:0;font-size:.86rem;color:var(--text);line-height:1.25;
+.lib-where{display:block;min-width:0;font-size:.86rem;color:var(--text);line-height:1.25;
   overflow:hidden;text-overflow:ellipsis}
 .lib-where b.lib-proj{font-weight:600;border-bottom:2px solid var(--accent);padding-bottom:1px}
-.lib-scope .btn{flex:0 0 auto}
+/* The two-state toggle. Segmented rather than two loose buttons so it reads as
+   one control with one answer — and so the unpressed half is visibly the way
+   back rather than a second thing to do. */
+.lib-tog{display:flex;width:100%;border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;background:var(--bg-white)}
+.lib-tog button{flex:1 1 0;min-width:0;display:flex;align-items:center;justify-content:center;gap:.32rem;
+  padding:.34rem .4rem;font:inherit;font-size:.78rem;line-height:1.2;color:var(--text-muted);
+  background:transparent;border:0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lib-tog button+button{border-left:1px solid var(--border)}
+.lib-tog button:hover{background:var(--bg-page);color:var(--text)}
+.lib-tog button.on{background:var(--accent);color:#fff;font-weight:600}
+.lib-tog button.on:hover{background:var(--accent)}
+.lib-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.12)}
+.lib-tog button.on .lib-dot{box-shadow:0 0 0 1px rgba(255,255,255,.65)}
+.lib-sub{margin:.34rem .1rem 0;font-size:.74rem;color:var(--text-muted);line-height:1.3}
+.lib-addrow{margin-top:.45rem}
+.lib-addrow .btn{width:100%;justify-content:center}
 .lib-outside{padding:.3rem .7rem;font-size:.74rem;color:var(--text-muted);background:var(--warning-bg);
   border-bottom:1px solid var(--border)}
 .lib-outside a{color:var(--primary);cursor:pointer;text-decoration:underline}
@@ -419,7 +435,8 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
 #projBar.empty{background:var(--bg-page)}
 #projBar .pb-label{font-family:var(--vom-mono);font-size:.66rem;letter-spacing:.1em;
   text-transform:uppercase;color:var(--text-muted)}
-#projBar .pb-name{font-weight:600;color:var(--text);border-bottom:2px solid var(--accent);padding-bottom:1px}
+#projBar .pb-name{font-weight:600;color:var(--text);border-bottom:2px solid var(--accent);padding-bottom:1px;text-decoration:none;cursor:pointer}
+#projBar a.pb-name:hover{color:var(--primary)}
 #projBar .pb-sub{color:var(--text-muted);font-size:.76rem}
 #projBar .pb-none{color:var(--text-muted)}
 #projBar .pb-mid{flex:1 1 auto;display:flex;align-items:center;gap:.4rem;min-width:0}
@@ -1205,6 +1222,70 @@ function _vomMgrReq(db,store,fn){
   });
 }
 
+/* ── What the library actually costs ──────────────────────────────────────
+   The Manager has always shown this beside its own sidebar. The hub is where
+   you now decide what to keep, so the number has to be visible where the
+   decision is made — otherwise "delete a dataset" is a guess about which one
+   is heavy.
+
+   The tally is our own: `navigator.storage.estimate()` reports the whole
+   origin, thumbnails and outputs included, and rounds hard. Both are shown,
+   because the difference between them is itself informative. */
+async function vomLibraryBytes(){
+  var out={count:0,total:0,onDisk:0,perDs:{}};
+  var db=await vomManagerDb();
+  if(!db) return out;
+  var recs=await _vomMgrReq(db,'images',function(s){return s.getAll();})||[];
+  for(var i=0;i<recs.length;i++){
+    var r=recs[i];
+    out.count++;
+    if(r.fsFile){ out.onDisk++; continue; }        /* on disk: costs nothing here */
+    var n=r.size||0;
+    out.total+=n;
+    out.perDs[r.dsId]=(out.perDs[r.dsId]||0)+n;
+  }
+  return out;
+}
+
+async function vomStorageEstimate(){
+  var o={usage:null,quota:null,persisted:null};
+  try{
+    if(navigator.storage&&navigator.storage.estimate){
+      var e=await navigator.storage.estimate();
+      o.usage=e.usage||0; o.quota=e.quota||0;
+    }
+    if(navigator.storage&&navigator.storage.persisted) o.persisted=await navigator.storage.persisted();
+  }catch(e){}
+  return o;
+}
+
+/* Deleting a dataset from the library — the browser copies, which for a
+   browser-stored dataset are the only copies. Records pointing at files on
+   disk lose their RECORD and keep their FILE: this never reaches into a folder
+   the user owns, the same rule every other removal here follows. */
+async function vomDeleteLibraryDataset(dsId){
+  var db=await vomManagerDb();
+  if(!db) throw new Error('the Image Manager library is not available in this browser');
+  var recs=await _vomMgrReq(db,'images',function(s){return s.index('dsId').getAll(dsId);})||[];
+  var ids=recs.map(function(r){return r.id;});
+  var freed=recs.reduce(function(n,r){return n+(r.fsFile?0:(r.size||0));},0);
+  var stores=['images','thumbs','blobs'].filter(function(n){return db.objectStoreNames.contains(n);});
+  for(var i=0;i<ids.length;i+=300){
+    var chunk=ids.slice(i,i+300);
+    await new Promise(function(res,rej){
+      var tx=db.transaction(stores,'readwrite');
+      stores.forEach(function(n){ var st=tx.objectStore(n); chunk.forEach(function(id){ st.delete(id); }); });
+      tx.oncomplete=res; tx.onerror=function(){rej(tx.error);};
+    });
+  }
+  await new Promise(function(res,rej){
+    var tx=db.transaction('datasets','readwrite');
+    tx.objectStore('datasets').delete(dsId);
+    tx.oncomplete=res; tx.onerror=function(){rej(tx.error);};
+  });
+  return {images:ids.length,freed:freed};
+}
+
 /* Every dataset in this project, whichever store it lives in. `count` is what
    is actually there right now, not what a record last claimed. */
 async function vomDatasets(p,handle){
@@ -1222,6 +1303,10 @@ async function vomDatasets(p,handle){
         doc=JSON.parse(await (await dh.getFile()).text());
       }catch(err){ continue; }        /* a bare folder of images is not a dataset */
       if(!doc||doc.format!=='vom-dataset') continue;
+      /* Removed from this project. The folder and every image in it are still
+         there — that is the whole point — but the project has been told to stop
+         listing it, and a scan that ignored this would put it straight back. */
+      if(doc.removed) continue;
       var ex={}; (doc.excluded||[]).forEach(function(n){ex[n]=1;});
       var count=0, edited=0;
       for await (var f of e[1].entries())
@@ -1262,6 +1347,43 @@ async function vomDatasets(p,handle){
                pending:true,doc:d});
   });
   return out2.sort(function(a,b){return _vomNat(a.name,b.name);});
+}
+
+/* What has been removed from this folder project, so the promise that nothing
+   was deleted can be CHECKED rather than believed. Restoring clears the stamp;
+   the next scan finds the dataset exactly as it was, curation included. */
+async function vomRemovedDatasets(p,handle){
+  if(!p||p.store!=='folder'||!handle) return [];
+  var root;
+  try{ root=await handle.getDirectoryHandle('datasets',{create:false}); }catch(e){ return []; }
+  var out=[];
+  for await (var e of root.entries()){
+    if(e[1].kind!=='directory') continue;
+    var doc=null;
+    try{
+      var dh=await e[1].getFileHandle('dataset.json');
+      doc=JSON.parse(await (await dh.getFile()).text());
+    }catch(err){ continue; }
+    if(!doc||doc.format!=='vom-dataset'||!doc.removed) continue;
+    var count=0;
+    for await (var f of e[1].entries())
+      if(f[1].kind==='file'&&VOM_IMG_RE.test(f[0])) count++;
+    out.push({id:doc.id,name:doc.name||e[0],slug:e[0],count:count,removed:doc.removed});
+  }
+  return out.sort(function(a,b){return _vomNat(a.name,b.name);});
+}
+
+async function vomRestoreDataset(p,handle,slug){
+  if(!p||p.store!=='folder'||!handle) throw new Error('the project folder is not connected');
+  var root=await handle.getDirectoryHandle('datasets',{create:false});
+  var dir=await root.getDirectoryHandle(slug);
+  var fh=await dir.getFileHandle('dataset.json');
+  var doc=JSON.parse(await (await fh.getFile()).text());
+  delete doc.removed;
+  var w=await (await dir.getFileHandle('dataset.json',{create:true})).createWritable();
+  await w.write(JSON.stringify(doc,null,2));
+  await w.close();
+  return doc.name||slug;
 }
 
 /* The dataset's images as ordinary File objects, ready to hand to whatever the
@@ -1624,7 +1746,7 @@ async function vomOpenOutput(p,handle,o){
    the Analyzer would report.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const MANAGER_VERSION = 'v3.2';
+const MANAGER_VERSION = 'v3.3';
 const ANALYZER_URL   = 'https://www.jonathancinnamon.com/image-colour-analyzer/';
 
 /* ══════════ Small utilities ══════════ */
@@ -3489,20 +3611,60 @@ function scopedDatasets() {
   return s === 'all' ? state.datasets : datasetsOfProject(s);
 }
 
-/* The sidebar head. No scope dropdown and no Projects link: switching what is
-   open changes where every tool saves, so it belongs at the hub with the rest of
-   a project's life — not on a control that looks like a filter. What is left
-   says WHAT YOU ARE LOOKING AT and offers the one thing you do here. */
+/* The sidebar head, in two rows.
+
+   Row one is a two-state toggle. A one-way "show all datasets" link had the
+   flaw that the way back only existed once you had already left: having widened
+   the view to find something, there was nothing on screen saying you were no
+   longer looking at your project. Both states are now always visible, and the
+   one you are in is pressed.
+
+   Row two is `+ Add`, on its own line so the toggle can hold the full project
+   name without the two fighting over a narrow sidebar.
+
+   Still no project SWITCHER here: changing what is open changes where every
+   tool in the suite saves, which is a heavier act than filtering a list and
+   belongs at the hub with the rest of a project's life. */
 function scopeBarHtml() {
   const s = libScope();
-  const p = (s === 'all' || s === UNFILED) ? null : prById(s);
-  const where = p
-    ? `Datasets in <b class="lib-proj" style="border-bottom-color:${p.colour || 'var(--accent)'}">${escapeHtml(p.name)}</b>`
-    : (s === UNFILED ? 'Datasets in no project' : 'All datasets');
+  const open = state.project;
+  const showingAll = (s === 'all' || s === UNFILED);
+  const proj = open ? open.name : null;
+  const dot = open
+    ? `<span class="lib-dot" style="background:${open.colour || 'var(--accent)'}"></span>`
+    : '';
+
+  /* With no project open there is nothing to toggle between, so the toggle does
+     not appear at all — a control with one reachable state is furniture. */
+  const toggle = open
+    ? `<div class="lib-tog" role="group" aria-label="Which datasets to show">
+         <button type="button" class="${showingAll ? '' : 'on'}"
+                 aria-pressed="${showingAll ? 'false' : 'true'}"
+                 onclick="setLibScope('${open.id}')"
+                 title="Only the datasets filed in ${escapeHtml(proj)}">${dot}This project</button>
+         <button type="button" class="${showingAll ? 'on' : ''}"
+                 aria-pressed="${showingAll ? 'true' : 'false'}"
+                 onclick="setLibScope('all')"
+                 title="Every dataset in your library, whatever project it belongs to">All datasets</button>
+       </div>`
+    : `<span class="lib-where">All datasets</span>`;
+
+  /* Kept to one or two lines. A four-line explanation at the top of a narrow
+     sidebar pushes the list itself below the fold, which costs more than the
+     sentence is worth — the point is only that adding still files into the
+     open project, not a lecture about it. */
+  const sub = open
+    ? `<div class="lib-sub">${showingAll
+        ? `<b>${escapeHtml(proj)}</b> is still open — new datasets land there.`
+        : `in <b>${escapeHtml(proj)}</b>`}</div>`
+    : '';
+
   return `<div class="lib-scope">
-      <span class="lib-where">${where}</span>
-      <button class="btn btn-primary btn-sm" onclick="openAddMenu(event)"
-              title="Add images, a folder, or a dataset from your library">+ Add&nbsp;&#9662;</button>
+      ${toggle}${sub}
+      <div class="lib-addrow">
+        <button class="btn btn-primary btn-sm" onclick="openAddMenu(event)"
+                title="Add images, a folder, or a dataset from your library">+ Add&nbsp;&#9662;</button>
+      </div>
     </div>`;
 }
 
@@ -5404,18 +5566,62 @@ async function toggleDatasetProject(dsId, pId, on) {
      tick has to land immediately; the copy reports its own progress. */
   if (on) autoCopyIntoFolder([dsId]);
 }
+/* Two different acts wearing one word.
+
+   A BROWSER dataset's stored copies are the only copies, so deleting one
+   really does destroy something and the dialog owes you the megabytes.
+
+   A FOLDER dataset is your own directory of your own files. Nothing here can
+   honestly be called deleting: the folder stays, every image stays, and all
+   that happens is that this project stops listing it. So it is called
+   Remove — and it now STICKS, which it did not before. */
 function confirmDeleteDataset(id) {
   const d = dsById(id);
+  if (!d) return;
+  const inFolder = isFolderDs(d);
+  /* `updateQuota` tallies the library and leaves each dataset's share on the
+     record, so the figure is already known and costs nothing to show. */
+  const bytes = d.bytes || 0;
+
+  if (inFolder) {
+    setTimeout(() => openModal(`Remove “${escapeHtml(d.name)}” from this project?`,
+      `<p>It stops being listed here and in the Projects hub. <b>Nothing on your disk is
+        deleted or moved</b> — the folder <code>datasets/${escapeHtml((d.fs && d.fs.slug) || '')}</code>
+        and all <b>${d.count || 0}</b> images stay exactly where they are.</p>
+       <p class="note" style="margin-top:.6rem">The dataset's own file is marked as removed, which is
+        what stops the folder scan putting it back. You can restore it from the project's card in the
+        Projects hub.</p>`,
+      [{ label: 'Cancel', cls: 'btn-ghost' },
+       { label: 'Remove from project', cls: 'btn-danger', fn: async () => {
+          setStatus('Removing…', 'progress');
+          try { await markFolderDatasetRemoved(d); }
+          catch (e) {
+            setStatus('Could not write to the project folder — ' +
+              escapeHtml(e.message || String(e)) + '. Nothing was removed.', 'error', 9000);
+            return;
+          }
+          await deleteDataset(id);
+          await updateQuota();
+          render();
+          setStatus(`<b>${escapeHtml(d.name)}</b> removed from this project. Its files are untouched.`,
+            'success', 6000);
+       } }]), 60);
+    return;
+  }
+
   setTimeout(() => openModal(`Delete “${escapeHtml(d.name)}”?`,
-    `<p>The dataset and its <b>${d.count || 0}</b> stored image copies will be deleted from this browser.</p>
-     <p class="note" style="margin-top:.6rem">Your files on disk are untouched — this tool only ever read them.</p>`,
+    `<p>The dataset and its <b>${d.count || 0}</b> stored image copies will be deleted from this browser${
+      bytes ? `, freeing about <b>${fmtBytes(bytes)}</b>` : ''}.</p>
+     <p class="note" style="margin-top:.6rem">These copies are in browser storage. If the images also
+      exist in a folder on your computer, that folder is untouched.</p>`,
     [{ label: 'Cancel', cls: 'btn-ghost' },
      { label: 'Delete dataset', cls: 'btn-danger', fn: async () => {
         setStatus('Deleting…', 'progress');
         await deleteDataset(id);
         await updateQuota();
         render();
-        setStatus('Dataset deleted.', 'success', 4000);
+        setStatus('Dataset deleted' + (bytes ? ` · about ${fmtBytes(bytes)} freed` : '') + '.',
+          'success', 5000);
      } }]), 60);
 }
 /* ── Edit dialogs ─────────────────────────────────────────────────────────
@@ -6448,7 +6654,11 @@ async function sendSelectionTo(recs, targetId, isMove) {
   }
 
   const crossing = !!(target.fs && target.fs.slug) !== !!(src && src.fs && src.fs.slug);
-  let failed = 0;
+  let failed = 0, why = '';
+  /* Bytes coming OFF disk INTO the browser: the copy is real and it counts
+     against the quota. Said before the work starts, because after it has
+     happened is too late to decide you would rather not. */
+  const intoBrowser = !!(src && src.fs && src.fs.slug) && !(target.fs && target.fs.slug);
 
   if (isMove && !crossing && !(target.fs && target.fs.slug)) {
     /* Both in the browser: repointing is instant however large the selection. */
@@ -6461,7 +6671,8 @@ async function sendSelectionTo(recs, targetId, isMove) {
     for (let i = 0; i < recs.length; i++) {
       const r = recs[i], nid = uid('i_');
       let bytes = null;
-      try { bytes = await sourceBlob(r.id, r); } catch (e) { bytes = null; }
+      try { bytes = await sourceBlob(r.id, r); }
+      catch (e) { bytes = null; if (!why) why = e.message || String(e); }
       if (!bytes) { failed++; continue; }
       const placed = await placeBytes(r, target, bytes);
       const t = await dbGet('thumbs', r.id);
@@ -6506,9 +6717,18 @@ async function sendSelectionTo(recs, targetId, isMove) {
   await updateQuota();
   render();
   const done = recs.length - failed;
-  setStatus(`${done} image${done === 1 ? '' : 's'} ${isMove ? 'moved' : 'copied'} to “${escapeHtml(target.name)}”` +
-    (failed ? ` · <b>${failed} could not be read</b>` : '') + '.',
-    failed ? 'error' : 'success', failed ? 9000 : 6000);
+  /* An empty result used to say "0 images copied" and stop, which reads as the
+     dataset being empty rather than the files being unreachable. If nothing
+     could be read, the REASON is the message. */
+  if (!done && failed) {
+    setStatus(`Nothing could be copied into “${escapeHtml(target.name)}” — ` +
+      escapeHtml(why || 'the images could not be read') + '.', 'error', 12000);
+  } else {
+    setStatus(`${done} image${done === 1 ? '' : 's'} ${isMove ? 'moved' : 'copied'} to “${escapeHtml(target.name)}”` +
+      (intoBrowser && done ? ' · copied from the project folder into browser storage' : '') +
+      (failed ? ` · <b>${failed} could not be read</b>` : '') + '.',
+      failed ? 'error' : 'success', failed ? 9000 : 6000);
+  }
 }
 
 /* ── Right-click on a tile ────────────────────────────────────────────────── */
@@ -6964,6 +7184,18 @@ async function afterFolderConnected(quiet) {
   try {
     const n = await scanProjectFolder();
     for (const ds of state.datasets.filter(isFolderDs)) await syncFolderDataset(ds, true);
+
+    /* Anything FILED into this project that is not on disk yet gets copied now.
+       Filing happens in four places — the hub, the row's + button, the import
+       dialog, the add menu — and only the Manager ones ever called the copy, so
+       a dataset filed from the hub stayed in the browser while a subset of it,
+       made here, was written to the folder. The project then held the child and
+       not the parent. Connecting is the moment that can see the whole list, so
+       it is the right place to make the folder match what the project claims. */
+    const owed = state.datasets.filter(d =>
+      (d.projectIds || []).includes(p.id) && !isFolderDs(d));
+    if (owed.length) await autoCopyIntoFolder(owed.map(d => d.id));
+
     if (state.curDs) state.images = await dbImagesOf(state.curDs);
     if (!quiet) {
       setStatus(`Connected to <b>${escapeHtml(p.folderName || p.name)}</b> · ${n} dataset(s). ` +
@@ -7147,7 +7379,7 @@ function renderProjectBar() {
   if (!el) return;
   const p = state.project;
   const hub = `<a class="pb-hub" href="${HUB_URL}"
-       title="Create, rename, fill and delete projects"><span class="pb-hub-i">&#9638;</span>Projects</a>`;
+       title="Create, rename, fill and delete projects"><span class="pb-hub-i">&#9638;</span>Projects hub</a>`;
   if (!p) {
     el.classList.add('empty');
     el.innerHTML = `<span class="pb-none">No project open — this is your whole library</span>` +
@@ -7161,7 +7393,10 @@ function renderProjectBar() {
   const needsConnect = p.store === 'folder' && state.projectAccess !== 'ok';
   el.innerHTML =
     `<span class="pb-label">Project</span>` +
-    `<span class="pb-name" style="border-bottom-color:${p.colour || 'var(--accent)'}">${escapeHtml(p.name)}</span>` +
+    /* Clickable: the name is what you reach for when you want to SEE the
+       project, and it used to be the one part of the bar that did nothing. */
+    `<a class="pb-name" href="${HUB_URL}" title="Open this project in the Projects hub"
+        style="border-bottom-color:${p.colour || 'var(--accent)'}">${escapeHtml(p.name)}</a>` +
     pill +
     (p.store === 'folder' && p.folderName ? `<span class="pb-sub">${escapeHtml(p.folderName)}</span>` : '') +
     (p.mirror ? `<span class="pb-pill mirror" title="Mirrored to ${escapeHtml(p.mirror.name)}">mirrored</span>` : '') +
@@ -7206,13 +7441,60 @@ async function fsDatasetDir(ds, create) {
   return await root.getDirectoryHandle(ds.fs ? ds.fs.slug : slugFor(ds.name), { create: !!create });
 }
 
+/* ── Reading a dataset that lives in SOMEONE ELSE'S folder ────────────────
+   A dataset belongs to a list of projects; its bytes live in exactly one
+   place. Once adopted into a folder project the files are on disk and the
+   browser copies are freed — so with a BROWSER project open, `fsDatasetDir`
+   threw "the project folder is not connected" and every read failed. That is
+   why a subset made in a browser project of a dataset that came from a folder
+   project came out empty, while the same subset made inside the folder project
+   was fine.
+
+   So the folder is followed to whichever project owns it, asking QUIETLY for
+   permission — no gesture, so this is safe to call from anywhere. Cached per
+   dataset because the walk touches the projects store and a 300-image copy
+   would otherwise do it 300 times. */
+const _fsDirCache = new Map();                   // dsId -> handle | null
+
+function invalidateFsDirCache() { _fsDirCache.clear(); }
+
+async function foreignDatasetDir(ds) {
+  if (!ds || !isFolderDs(ds)) return null;
+  if (_fsDirCache.has(ds.id)) return _fsDirCache.get(ds.id);
+  let dir = null;
+  const owners = (ds.projectIds || []).slice();
+  if (state.project && state.project.store === 'folder') owners.unshift(state.project.id);
+  for (const pid of owners) {
+    let p = prById(pid);
+    if (!p) { try { p = await vomProjectGet(pid); } catch (e) { p = null; } }
+    if (!p || p.store !== 'folder') continue;
+    let q = { ok: false };
+    try { q = await vomQuietAccess(p); } catch (e) {}
+    if (!q.ok) continue;
+    try {
+      const root = await q.handle.getDirectoryHandle('datasets', { create: false });
+      dir = await root.getDirectoryHandle(ds.fs.slug);
+      break;
+    } catch (e) { /* that project is not the one holding it */ }
+  }
+  _fsDirCache.set(ds.id, dir);
+  return dir;
+}
+
 /* The one place that decides where an image's bytes come from. */
 async function sourceBlob(id, rec) {
   const r = rec || state.images.find(x => x.id === id) || await dbGet('images', id);
   if (r && r.fsFile) {
     const ds = dsById(r.dsId);
     if (!ds) return null;
-    const dir = await fsDatasetDir(ds, false);
+    let dir = null;
+    try { dir = await fsDatasetDir(ds, false); } catch (e) { dir = null; }
+    if (!dir) dir = await foreignDatasetDir(ds);
+    if (!dir) {
+      throw new Error('these images live in a project folder on your computer, and that folder is ' +
+        'not reachable from here — open that folder project once and it will work from every ' +
+        'project the dataset belongs to');
+    }
     const fh = await dir.getFileHandle(r.fsFile);
     return await fh.getFile();
   }
@@ -7234,6 +7516,29 @@ async function fsUniqueName(dir, name) {
   return `${stem}_${Date.now()}.${ext}`;
 }
 
+/* ── Removing a folder dataset ────────────────────────────────────────────
+   A folder project's datasets ARE its folders, so deleting the browser records
+   removed nothing: the next scan found dataset.json still sitting there and
+   built the dataset straight back. It came back "soon after" because that scan
+   runs on every reconnect.
+
+   Nothing on disk is deleted and nothing is moved. The manifest gains a
+   `removed` stamp, the scan skips it, and the folder stays exactly where it
+   was with every image in it — so this is undoable by hand as well as by the
+   Restore button in the hub. The same idea as `excluded` one level up: the
+   library is told to leave something alone rather than the files being taken
+   away. */
+async function markFolderDatasetRemoved(ds) {
+  const dir = await fsDatasetDir(ds, false);
+  let doc = {};
+  try {
+    const fh = await dir.getFileHandle('dataset.json');
+    doc = JSON.parse(await (await fh.getFile()).text());
+  } catch (e) { doc = datasetDoc(ds, await dbImagesOf(ds.id)); }
+  doc.removed = Date.now();
+  await writeJson(dir, 'dataset.json', doc);
+}
+
 /* ── Scanning ─────────────────────────────────────────────────────────────
    A folder project's datasets are whatever is in datasets/. Found by their
    dataset.json, because a bare folder of images is not yet a dataset — the
@@ -7252,6 +7557,7 @@ async function scanProjectFolder() {
       doc = JSON.parse(await (await fh.getFile()).text());
     } catch (e) { continue; }               // not a dataset, leave it alone
     if (!doc || doc.format !== 'vom-dataset') continue;
+    if (doc.removed) continue;              // removed here; the files stay put
 
     let ds = dsById(doc.id);
     if (!ds) {
@@ -7478,7 +7784,15 @@ async function autoCopyIntoFolder(dsIds) {
   let total = 0, failed = 0;
   try {
     for (const ds of todo) {
-      const imgs = ds.id === state.curDs ? state.images : await dbImagesOf(ds.id);
+      /* ALWAYS from the database, never from `state.images`.
+
+         This used to prefer the in-memory list when the dataset was the open
+         one, which is faster and was wrong at the only moment that matters:
+         running from `afterFolderConnected`, the page has just loaded and
+         `state.images` is still empty. The dataset then looked like it had no
+         images, so it was given a folder and nothing was put in it — the exact
+         shape of the bug this call was added to fix, one layer down. */
+      const imgs = await dbImagesOf(ds.id);
       if (!imgs.length) { await fsWriteDataset(ds, imgs); continue; }
       setSaveState('saving', `Copying ${ds.name} into ${p.folderName || p.name}`);
       setStatus(`Copying <b>${escapeHtml(ds.name)}</b> into ` +
