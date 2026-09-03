@@ -354,6 +354,17 @@ details.insp-sec > *:not(summary){margin-top:.5rem}
   gap:.6rem;background:rgba(12,20,25,.82);border:1px solid rgba(255,255,255,.16);border-radius:999px;
   padding:.35rem .8rem;color:#fff;font-size:.76rem;backdrop-filter:blur(6px);z-index:3;max-width:92%}
 #lb360Bar.hidden{display:none}
+/* What used to be a plain blank stage when the original bytes could not be
+   read — a file moved outside the tool, or still syncing down from a
+   provider like Google Drive. The grid tile beside it still looks fine
+   because that reads a thumbnail cached at import time; this is the one
+   place that reads the file itself, so it is the one place that has to say
+   when that fails. */
+#lbErr{max-width:420px;text-align:center;color:#e8ecef;font-size:.92rem;line-height:1.5;
+  padding:1.4rem 1.6rem;background:rgba(20,28,34,.85);border:1px solid rgba(255,255,255,.14);
+  border-radius:10px}
+#lbErr.hidden{display:none}
+#lbErr b{color:#fff}
 #lb360Bar select{background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.25)}
 #lb360Bar select option{color:var(--text)}
 #lb360Bar .btn-ghost{color:rgba(255,255,255,.85);border-color:rgba(255,255,255,.28)}
@@ -711,6 +722,7 @@ table.mini td.num{text-align:right;font-variant-numeric:tabular-nums}
       <button class="lb-nav prev" onclick="lbStep(-1)" title="Previous (&larr;, or Shift+&larr; in 360&deg;)">&#8249;</button>
       <canvas id="lbCanvas"></canvas>
       <canvas id="lb360Canvas" class="hidden"></canvas>
+      <div id="lbErr" class="hidden"></div>
       <div id="lb360Bar" class="hidden">
         <select id="lb360Mode" class="sm" onchange="v360SetMode(this.value)"></select>
         <span id="lb360Zoom"></span>
@@ -1746,7 +1758,7 @@ async function vomOpenOutput(p,handle,o){
    the Analyzer would report.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const MANAGER_VERSION = 'v3.3';
+const MANAGER_VERSION = 'v3.3.1';
 const ANALYZER_URL   = 'https://www.jonathancinnamon.com/image-colour-analyzer/';
 
 /* ══════════ Small utilities ══════════ */
@@ -4305,14 +4317,42 @@ function applyColourAdjust(cx, w, h, e) {
    and forth in the lightbox does not re-decode every time. */
 const _bmpCache = new Map();
 const BMP_CACHE_MAX = 4;
+/* Set whenever `originalBitmap` returns null BECAUSE THE READ FAILED, as
+   opposed to there simply being nothing to read. Most of this function's many
+   callers already treat a null bitmap as "skip this one" and are correct to —
+   an export or a thumbnail regen for 400 images should not stop cold because
+   one file could not be read. The lightbox is the exception: a null bitmap
+   there is the WHOLE picture, so it is worth checking this and saying why
+   instead of leaving the canvas blank. Read once, right after the call that
+   might have set it — a second call from something else will overwrite it. */
+let lastReadError = null;
 async function originalBitmap(id) {
+  lastReadError = null;
   if (_bmpCache.has(id)) { const b = _bmpCache.get(id); _bmpCache.delete(id); _bmpCache.set(id, b); return b; }
   /* sourceBlob, not dbGet('blobs') — an image in a folder project has no
      stored blob at all; its bytes are on disk. Both callers funnelled through
-     here already, which is why the folder store needed exactly one seam. */
-  const blob = await sourceBlob(id);
+     here already, which is why the folder store needed exactly one seam.
+
+     sourceBlob THROWS rather than returning null when it cannot read the
+     bytes — deliberately, so a whole-project permission problem or a single
+     unreadable file is never mistaken for "nothing here". Caught here so
+     every one of this function's other callers keeps the plain contract
+     they were already written against: null means try nothing further. */
+  let blob = null;
+  try { blob = await sourceBlob(id); }
+  catch (e) { lastReadError = e.message || String(e); return null; }
   if (!blob) return null;
-  const bmp = await createImageBitmap(blob);
+  /* A file that exists but is not a real, complete image yet — a Drive
+     placeholder still hydrating, or bytes truncated mid-sync — reads back a
+     blob just fine and only fails HERE, at decode. Same treatment. */
+  let bmp = null;
+  try { bmp = await createImageBitmap(blob); }
+  catch (e) {
+    const named = state.images.find(x => x.id === id);
+    lastReadError = '“' + (named ? (named.origName || named.name) : 'this file') +
+      '” could not be decoded as an image — it may still be syncing down, or the file is not valid.';
+    return null;
+  }
   _bmpCache.set(id, bmp);
   while (_bmpCache.size > BMP_CACHE_MAX) {
     const k = _bmpCache.keys().next().value;
@@ -5411,6 +5451,7 @@ function closeLightbox() {
   $('lb360Canvas').classList.add('hidden');
   $('lb360Bar').classList.add('hidden');
   $('lbStage').classList.remove('is360');
+  $('lbErr').classList.add('hidden');
   const cv = $('lbCanvas');
   cv.width = 1; cv.height = 1;
 }
@@ -5481,10 +5522,22 @@ async function renderLightbox() {
   const cv = $('lbCanvas'), cx = cv.getContext('2d');
   cv.width = 1; cv.height = 1;
   cx.clearRect(0, 0, 1, 1);
+  $('lbErr').classList.add('hidden');
 
   const bmp = await originalBitmap(r.id);
-  if (!bmp) return;
   if (_lbId !== r.id) return;                        // stepped away while decoding
+  if (!bmp) {
+    /* `lastReadError` is set only when something was actually WRONG — a
+       dataset genuinely holding zero images is a different, and rarer, state
+       than the tree already handles elsewhere. Silence here would just be
+       today's blank stage again, under a different cause. */
+    const err = $('lbErr');
+    err.innerHTML = lastReadError
+      ? escapeHtml(lastReadError)
+      : 'This image could not be read.';
+    err.classList.remove('hidden');
+    return;
+  }
 
   if (_lb360) {
     // The 360 view reads the EDITED pixels, like every other view.
@@ -7495,8 +7548,23 @@ async function sourceBlob(id, rec) {
         'not reachable from here — open that folder project once and it will work from every ' +
         'project the dataset belongs to');
     }
-    const fh = await dir.getFileHandle(r.fsFile);
-    return await fh.getFile();
+    /* The FOLDER was reachable — that is everything the check above proved.
+       This one FILE inside it can still fail: renamed or deleted by hand
+       outside the tool, or (very plausibly, given how many of these projects
+       live under a synced "My Drive" folder) a cloud-only placeholder that
+       has not actually been downloaded to this machine yet. Uncaught, that
+       threw a bare NotFoundError straight out of `openLightbox`, which is
+       why the reported symptom was a lightbox that opened and stayed BLANK —
+       the grid tile beside it still looked fine because it reads a thumbnail
+       cached at import time, never the file itself. */
+    try {
+      const fh = await dir.getFileHandle(r.fsFile);
+      return await fh.getFile();
+    } catch (e) {
+      throw new Error('“' + (r.origName || r.name || r.fsFile) + '” could not be read from the project ' +
+        'folder. It may have been moved or renamed since it was added, or — if this folder is synced ' +
+        'through a service like Google Drive — it may not be downloaded to this computer yet.');
+    }
   }
   const b = await dbGet('blobs', id);
   return b ? b.blob : null;
